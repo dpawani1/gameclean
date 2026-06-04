@@ -1,6 +1,6 @@
 # 🎮 GameClean by Darsh Pawani
 
-A Windows gaming storage cleanup CLI that scans, reviews, and deletes cache, leftover files, crash logs, and old installers across games, launchers, GPU drivers, and software.
+👑 A command-line tool that clears hidden game junk so titles like CS2, Fortnite, Valorant, and EA FC can feel smoother and run faster
 
 ---
 
