@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 import sys
 
+from .cleaner import (
+    DeleteStats,
+    clean_folder_contents,
+    filter_nonzero_review_results,
+    is_deletion_allowed,
+    review_zero_byte_skipped_count,
+    safe_cleanable_results,
+    safety_skipped_results,
+)
 from .paths import root_diagnostics
 from .scanner import REVIEW, SAFE, ScanProgress, ScanResult, scan
 from .utils import format_size
@@ -41,6 +51,30 @@ def main(argv: Sequence[str] | None = None) -> None:
             finally:
                 progress.finish()
         print_scan_report(results, show_empty=args.show_empty)
+        return
+
+    if args.command == "clean":
+        custom_roots = [Path(root).expanduser() for root in args.root]
+        print_clean_header()
+        progress = ProgressPrinter(icon="🔍")
+        print("🔍 Scanning for cleanup targets...")
+        try:
+            results = scan(custom_roots, review_limit=args.limit, progress=progress.update)
+        finally:
+            progress.finish()
+        if args.dry_run:
+            print_clean_dry_run(results)
+            return
+        if args.safe:
+            print_final_clean_report(clean_selected_targets(collect_safe_cleanup_targets(results)))
+            return
+        try:
+            selection = collect_review_cleanup_targets(results)
+        except KeyboardInterrupt:
+            print()
+            print("Cleanup cancelled before deletion. No files were deleted.")
+            return
+        print_final_clean_report(clean_selected_targets(selection))
         return
 
     parser.print_help()
@@ -95,6 +129,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.set_defaults(command="scan")
 
+    clean_parser = subparsers.add_parser(
+        "clean",
+        help="scan, review, then clean selected cache folders",
+    )
+    clean_mode = clean_parser.add_mutually_exclusive_group()
+    clean_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="preview cleanable folders without deleting anything",
+    )
+    clean_mode.add_argument(
+        "--safe",
+        action="store_true",
+        help="delete contents of SAFE folders only",
+    )
+    clean_mode.add_argument(
+        "--review",
+        action="store_true",
+        help="same as the default: scan, review REVIEW folders, then clean selected folders",
+    )
+    clean_parser.add_argument(
+        "--root",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="scan a custom Windows-like root for demo/testing; can be passed more than once",
+    )
+    clean_parser.add_argument(
+        "--limit",
+        type=non_negative_int,
+        default=100,
+        metavar="N",
+        help="maximum number of review-only results to report (default: 100)",
+    )
+    clean_parser.set_defaults(command="clean")
+
     return parser
 
 
@@ -115,7 +185,8 @@ def non_negative_int(value: str) -> int:
 class ProgressPrinter:
     width = 24
 
-    def __init__(self) -> None:
+    def __init__(self, icon: str = "") -> None:
+        self._icon = icon
         self._interactive = sys.stdout.isatty()
         self._line_open = False
 
@@ -142,7 +213,8 @@ class ProgressPrinter:
     def _print_progress(self, progress: ScanProgress, *, always: bool) -> None:
         if not self._interactive and not always:
             return
-        line = f"{progress.label}: {progress_bar(progress.current, progress.total)} {progress.current}/{progress.total}"
+        label = f"{self._icon} {progress.label}" if self._icon else progress.label
+        line = f"{label}: {progress_bar(progress.current, progress.total)} {progress.current}/{progress.total}"
         if self._interactive:
             print(f"\r{line}", end="", flush=True)
             self._line_open = True
@@ -239,6 +311,213 @@ def print_scan_report(results: list[ScanResult], *, show_empty: bool = False) ->
         print_empty_scan_note()
         print()
     print("This scan is read-only. GameClean did not delete or modify any files.")
+
+
+@dataclass
+class CleanedItem:
+    name: str
+    bytes_deleted: int
+
+
+@dataclass
+class CleanupSelection:
+    selected: list[ScanResult]
+    safe_selected: list[ScanResult]
+    review_selected: list[ScanResult]
+    review_skipped: int
+    review_zero_byte_skipped: int
+    safety_skipped: list[ScanResult]
+    safe_zero_byte_skipped: int = 0
+
+
+@dataclass
+class CleanReport:
+    selection: CleanupSelection
+    stats: DeleteStats
+    cleaned_items: list[CleanedItem]
+
+
+def print_clean_header() -> None:
+    print("GameClean clean")
+    print("---------------")
+    print()
+
+
+def print_clean_dry_run(results: list[ScanResult]) -> None:
+    safe_results = safe_cleanable_results(results)
+    review_results = filter_nonzero_review_results(results)
+    zero_review_count = review_zero_byte_skipped_count(results)
+    safety_skipped = safety_skipped_results(results)
+
+    print_clean_preview_section("SAFE folders that would be cleaned", safe_results)
+    print_clean_preview_section("REVIEW folders available for interactive review", review_results)
+
+    if safety_skipped:
+        print("Skipped for safety:")
+        for result in safety_skipped:
+            print(f"* {result.name} ({result.category})")
+            print(f"  Path: {result.path}")
+        print()
+
+    safe_total = sum(result.size_bytes for result in safe_results)
+    review_total = sum(result.size_bytes for result in review_results)
+    print("Totals:")
+    print(f"SAFE cleanable total: {format_size(safe_total)} across {len(safe_results)} folders")
+    print(f"REVIEW nonzero total: {format_size(review_total)} across {len(review_results)} folders")
+    print(f"REVIEW 0 B skipped count: {zero_review_count}")
+    if safety_skipped:
+        print(f"Safety skipped count: {len(safety_skipped)}")
+    print()
+    print("Dry run only. No files were deleted.")
+
+
+def print_clean_preview_section(title: str, results: list[ScanResult]) -> None:
+    print(f"{title}:")
+    if not results:
+        print("No folders found.")
+        print()
+        return
+    for index, result in enumerate(results, start=1):
+        print(f"{index}. {result.name}")
+        print(f"   Source: {result.source}")
+        print(f"   Path: {result.path}")
+        print(f"   Size: {format_size(result.size_bytes)}")
+        print(f"   Reason: {result.reason}")
+        print()
+
+
+def collect_safe_cleanup_targets(results: list[ScanResult]) -> CleanupSelection:
+    safe_results = safe_cleanable_results(results)
+    return CleanupSelection(
+        selected=safe_results,
+        safe_selected=safe_results,
+        review_selected=[],
+        review_skipped=0,
+        review_zero_byte_skipped=review_zero_byte_skipped_count(results),
+        safety_skipped=safety_skipped_results(results),
+        safe_zero_byte_skipped=sum(1 for result in results if result.category == SAFE and result.size_bytes == 0),
+    )
+
+
+def collect_review_cleanup_targets(results: list[ScanResult]) -> CleanupSelection:
+    safe_results = safe_cleanable_results(results)
+    review_results = [result for result in results if result.category == REVIEW]
+    prompt_results = filter_nonzero_review_results(results)
+    zero_review_count = review_zero_byte_skipped_count(results)
+    safety_skipped = safety_skipped_results(results)
+    review_selected: list[ScanResult] = []
+    review_skipped = 0
+
+    print_safe_auto_selection(safe_results)
+    print("Now reviewing REVIEW items one by one.")
+    print("0 B REVIEW items will be skipped.")
+    print()
+
+    prompt_number = 0
+    for result in review_results:
+        if result.size_bytes == 0:
+            continue
+        if not is_deletion_allowed(result):
+            continue
+
+        prompt_number += 1
+        print(f"Review item {prompt_number}/{len(prompt_results)}")
+        print(f"Name: {result.name}")
+        print(f"Source: {result.source}")
+        print(f"Path: {result.path}")
+        print(f"Size: {format_size(result.size_bytes)}")
+        print(f"Reason: {result.reason}")
+        answer = input("Delete? [y/N]: ").strip().lower()
+        print()
+
+        if answer in {"q", "quit"}:
+            review_skipped += len(prompt_results) - prompt_number + 1
+            break
+        if answer in {"y", "yes"}:
+            review_selected.append(result)
+        else:
+            review_skipped += 1
+
+    selected = [*safe_results, *review_selected]
+    return CleanupSelection(
+        selected=selected,
+        safe_selected=safe_results,
+        review_selected=review_selected,
+        review_skipped=review_skipped,
+        review_zero_byte_skipped=zero_review_count,
+        safety_skipped=safety_skipped,
+        safe_zero_byte_skipped=sum(1 for result in results if result.category == SAFE and result.size_bytes == 0),
+    )
+
+
+def print_safe_auto_selection(safe_results: list[ScanResult]) -> None:
+    print("SAFE items selected automatically:")
+    if not safe_results:
+        print("- None")
+        print()
+        return
+    for result in safe_results:
+        print(f"- {result.name} - {format_size(result.size_bytes)}")
+    print()
+
+
+def clean_selected_targets(selection: CleanupSelection) -> CleanReport:
+    print_cleanup_selection_summary(selection)
+    stats = DeleteStats()
+    cleaned_items: list[CleanedItem] = []
+    progress = ProgressPrinter(icon="🧹")
+
+    print("🧹 Deleting selected cleanup targets...")
+    if not selection.selected:
+        progress.update(ScanProgress("Deleting", 0, 1, Path()))
+        progress.finish()
+        return CleanReport(selection, stats, cleaned_items)
+
+    try:
+        for index, result in enumerate(selection.selected, start=1):
+            result_stats = clean_folder_contents(result.path)
+            stats.add(result_stats)
+            cleaned_items.append(CleanedItem(result.name, result_stats.bytes_deleted))
+            progress.update(ScanProgress("Deleting", index, len(selection.selected), result.path))
+    finally:
+        progress.finish()
+
+    return CleanReport(selection, stats, cleaned_items)
+
+
+def print_cleanup_selection_summary(selection: CleanupSelection) -> None:
+    print("Cleanup selection summary:")
+    safe_total = sum(result.size_bytes for result in selection.safe_selected)
+    review_total = sum(result.size_bytes for result in selection.review_selected)
+    print(f"SAFE selected automatically: {len(selection.safe_selected)} folders, {format_size(safe_total)}")
+    print(f"REVIEW selected by user: {len(selection.review_selected)} folders, {format_size(review_total)}")
+    print(f"REVIEW skipped by user: {selection.review_skipped} folders")
+    print(f"REVIEW skipped because 0 B: {selection.review_zero_byte_skipped} folders")
+    if selection.safety_skipped:
+        print(f"Skipped for safety: {len(selection.safety_skipped)} folders")
+    print()
+
+
+def print_final_clean_report(report: CleanReport) -> None:
+    print()
+    print("Final report:")
+    print(f"Folders selected: {len(report.selection.selected)}")
+    print(f"Files deleted: {report.stats.files_deleted}")
+    print(f"Folders deleted: {report.stats.folders_deleted}")
+    skipped = report.stats.failed_items + len(report.selection.safety_skipped) + report.selection.safe_zero_byte_skipped
+    print(f"Skipped/failed items: {skipped}")
+    print(f"Estimated space cleaned: {format_size(report.stats.bytes_deleted)}")
+    print_cleaned_items(report.cleaned_items)
+
+
+def print_cleaned_items(items: list[CleanedItem]) -> None:
+    print()
+    print("Cleaned:")
+    if not items:
+        print("No folders cleaned.")
+        return
+    for item in items:
+        print(f"* {item.name}: {format_size(item.bytes_deleted)}")
 
 
 def grouped_results(results: list[ScanResult]) -> list[tuple[str, list[ScanResult]]]:
