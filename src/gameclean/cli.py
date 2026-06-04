@@ -17,12 +17,19 @@ from .cleaner import (
     safety_skipped_results,
 )
 from .installers import DEFAULT_INSTALLER_MIN_SIZE, InstallerResult, is_installer_deletion_allowed, scan_installers
-from .leftovers import INSTALLED, NOT_INSTALLED, UNKNOWN, DEFAULT_MIN_SIZE, scan_leftovers
+from .leftovers import INSTALLED, NOT_INSTALLED, UNKNOWN, DEFAULT_MIN_SIZE, is_known_game_related, scan_leftovers
 from .paths import detect_os_mode, root_diagnostics
 from .scanner import REVIEW, SAFE, ScanProgress, ScanResult, scan
 from .utils import format_size
 
 AUTHOR_LINE = "author: Darsh Pawani"
+LEFTOVER_DELETION_WARNING = (
+    "DANGEROUS, SOME FILES MAY BE IMPORTANT ONLY DELETE APPS YOU KNOW ARE UNINSTALLED."
+)
+LEFTOVER_FINAL_WARNING = (
+    "Only delete folders for games you know you uninstalled and no longer need. "
+    "Some game folders may contain saves or settings."
+)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -127,6 +134,7 @@ def handle_leftovers(args: argparse.Namespace) -> None:
             max_depth=args.max_depth,
             limit=args.limit,
             include_installed=True,
+            include_save_risk=args.include_save_risk,
             progress=progress.update,
         )
     finally:
@@ -334,6 +342,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--show-status",
         action="store_true",
         help="show install status in leftover output",
+    )
+    leftovers_parser.add_argument(
+        "--include-save-risk",
+        action="store_true",
+        help="include high-risk game folders that may contain saves, configs, settings, or mods",
     )
     leftovers_mode = leftovers_parser.add_mutually_exclusive_group()
     leftovers_mode.add_argument(
@@ -875,13 +888,15 @@ def collect_leftover_cleanup_targets(results: list[ScanResult], *, include_insta
         for result in results
         if result.size_bytes > 0
         and is_deletion_allowed(result)
-        and (include_installed or result.install_status in {NOT_INSTALLED, UNKNOWN})
+        and is_known_game_related(result.name)
+        and (include_installed or result.install_status == NOT_INSTALLED)
     ]
     selected: list[ScanResult] = []
     skipped = 0
 
     print()
     print("Now reviewing possible leftover folders one by one.")
+    print(LEFTOVER_DELETION_WARNING)
     print()
 
     for index, result in enumerate(prompt_results, start=1):
@@ -917,6 +932,10 @@ def delete_selected_leftovers(selection: CleanupSelection) -> CleanReport:
     cleaned_items: list[CleanedItem] = []
     progress = ProgressPrinter(icon="🧹")
 
+    if selection.selected and not confirm_leftover_deletion():
+        print("Leftover cleanup cancelled before deletion. No files were deleted.")
+        return CleanReport(selection, stats, cleaned_items)
+
     print("🧹 Deleting selected leftover folders...")
     if not selection.selected:
         progress.update(ScanProgress("Deleting", 0, 1, Path()))
@@ -936,6 +955,13 @@ def delete_selected_leftovers(selection: CleanupSelection) -> CleanReport:
         progress.finish()
 
     return CleanReport(selection, stats, cleaned_items)
+
+
+def confirm_leftover_deletion() -> bool:
+    print(LEFTOVER_FINAL_WARNING)
+    answer = input("Confirm deletion of selected leftover folders? [y/N]: ").strip().lower()
+    print()
+    return answer in {"y", "yes"}
 
 
 def print_leftover_selection_summary(selection: CleanupSelection) -> None:

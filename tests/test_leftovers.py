@@ -12,18 +12,18 @@ class LeftoverScanTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             local = root / "Users" / "Darsh" / "AppData" / "Local"
-            small = local / "SmallOldGame"
-            large = local / "LargeOldGame"
-            largest = local / "LargestOldGame"
+            small = local / "Minecraft"
+            large = local / "EA SPORTS FC 25"
+            largest = local / "Hogwarts Legacy"
             for path in (small, large, largest):
                 path.mkdir(parents=True)
             (small / "data.bin").write_bytes(b"a" * 10)
             (large / "data.bin").write_bytes(b"a" * 20)
             (largest / "data.bin").write_bytes(b"a" * 30)
 
-            results = scan_leftovers([root], min_size=20)
+            results = scan_leftovers([root], min_size=20, include_save_risk=True)
 
-            self.assertEqual([result.name for result in results], ["LargestOldGame", "LargeOldGame"])
+            self.assertEqual([result.name for result in results], ["Hogwarts Legacy", "EA SPORTS FC 25"])
             self.assertTrue(all(result.category == "REVIEW" for result in results))
 
     def test_scan_leftovers_skips_safety_and_launcher_paths(self) -> None:
@@ -34,40 +34,40 @@ class LeftoverScanTests(unittest.TestCase):
                 path = local / name
                 path.mkdir(parents=True)
                 (path / "data.bin").write_bytes(b"a" * 20)
-            old_game = local / "OldGame"
-            old_game.mkdir(parents=True)
-            (old_game / "data.bin").write_bytes(b"a" * 20)
+            known_game = local / "Hogwarts Legacy"
+            known_game.mkdir(parents=True)
+            (known_game / "data.bin").write_bytes(b"a" * 20)
 
             results = scan_leftovers([root], min_size=1)
 
-            self.assertEqual([result.name for result in results], ["OldGame"])
+            self.assertEqual([result.name for result in results], ["Hogwarts Legacy"])
 
-    def test_default_scan_does_not_report_grandchildren_but_deep_can(self) -> None:
+    def test_default_scan_does_not_report_grandchildren_but_deep_can_find_known_games(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             local = root / "Users" / "Darsh" / "AppData" / "Local"
-            nested = local / "Vendor" / "NestedOldGame"
+            nested = local / "Vendor" / "Hogwarts Legacy"
             nested.mkdir(parents=True)
             (nested / "data.bin").write_bytes(b"a" * 20)
 
             default_results = scan_leftovers([root], min_size=1)
             deep_results = scan_leftovers([root], min_size=1, deep=True, max_depth=2)
 
-            self.assertEqual([result.name for result in default_results], ["Vendor"])
-            self.assertIn("NestedOldGame", [result.name for result in deep_results])
+            self.assertEqual(default_results, [])
+            self.assertIn("Hogwarts Legacy", [result.name for result in deep_results])
 
     def test_scan_leftovers_applies_limit_after_sorting_by_size(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             local = root / "Users" / "Darsh" / "AppData" / "Local"
-            for name, size in (("MediumOldGame", 20), ("LargestOldGame", 30), ("SmallOldGame", 10)):
+            for name, size in (("Counter-Strike 2", 20), ("Hogwarts Legacy", 30), ("EA SPORTS FC 25", 10)):
                 path = local / name
                 path.mkdir(parents=True)
                 (path / "data.bin").write_bytes(b"a" * size)
 
             results = scan_leftovers([root], min_size=1, limit=2)
 
-            self.assertEqual([result.name for result in results], ["LargestOldGame", "MediumOldGame"])
+            self.assertEqual([result.name for result in results], ["Hogwarts Legacy", "Counter-Strike 2"])
 
     def test_scan_leftovers_marks_steam_manifest_match_as_installed_and_hides_by_default(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -97,13 +97,76 @@ class LeftoverScanTests(unittest.TestCase):
     def test_scan_leftovers_marks_unknown_when_no_install_sources_exist(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            old_game = root / "Users" / "Darsh" / "AppData" / "Local" / "OldGame"
-            old_game.mkdir(parents=True)
-            (old_game / "data.bin").write_bytes(b"a" * 20)
+            game = root / "Users" / "Darsh" / "AppData" / "Local" / "Hogwarts Legacy"
+            game.mkdir(parents=True)
+            (game / "data.bin").write_bytes(b"a" * 20)
 
             results = scan_leftovers([root], min_size=1)
 
             self.assertEqual(results[0].install_status, "UNKNOWN")
+
+    def test_scan_leftovers_excludes_common_software_and_system_false_positives(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            local = root / "Users" / "Darsh" / "AppData" / "Local"
+            programdata = root / "ProgramData"
+            false_positives = [
+                local / "Programs",
+                programdata / "Darsh 2",
+                local / "Discord",
+                local / "com.adobe.dunamis",
+                local / "Mozilla-1de4eec8-1241-4177-a864-e594e8d1fb38",
+                local / "arduino-ide-updater",
+                local / "Google",
+                local / "BraveSoftware",
+                local / "WSL",
+                local / "MATLAB",
+                local / "miniforge3",
+                local / "JetBrains",
+                local / "MySQL",
+                local / "Raspberry Pi",
+                local / "Lenovo",
+                local / "Docker",
+                local / "OneDrive",
+                local / "Code",
+                local / "pip",
+                local / "Python",
+            ]
+            for path in false_positives:
+                path.mkdir(parents=True)
+                (path / "data.bin").write_bytes(b"a" * 20)
+            known_game = local / "Hogwarts Legacy"
+            known_game.mkdir(parents=True)
+            (known_game / "data.bin").write_bytes(b"a" * 20)
+
+            results = scan_leftovers([root], min_size=1)
+
+            self.assertEqual([result.name for result in results], ["Hogwarts Legacy"])
+
+    def test_scan_leftovers_excludes_save_risk_games_by_default(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            local = root / "Users" / "Darsh" / "AppData" / "Local"
+            for name in ("EldenRing", "Citra", ".minecraft", "Hogwarts Legacy"):
+                path = local / name
+                path.mkdir(parents=True)
+                (path / "data.bin").write_bytes(b"a" * 20)
+
+            default_results = scan_leftovers([root], min_size=1)
+            save_risk_results = scan_leftovers([root], min_size=1, include_save_risk=True)
+
+            self.assertEqual([result.name for result in default_results], ["Hogwarts Legacy"])
+            self.assertEqual(
+                {result.name for result in save_risk_results},
+                {"EldenRing", "Citra", "minecraft", "Hogwarts Legacy"},
+            )
+            self.assertTrue(
+                all(
+                    result.reason.startswith("HIGH RISK")
+                    for result in save_risk_results
+                    if result.name in {"EldenRing", "Citra", "minecraft"}
+                )
+            )
 
 
 if __name__ == "__main__":

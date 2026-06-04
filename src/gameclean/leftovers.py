@@ -28,6 +28,9 @@ UNKNOWN = "UNKNOWN"
 LEFTOVER_REASON_NOT_INSTALLED = "Game data folder found, but no installed game match was detected"
 LEFTOVER_REASON_INSTALLED = "Game data folder found, but the game/app appears to still be installed"
 LEFTOVER_REASON_UNKNOWN = "Game data folder found, but installed game detection was inconclusive"
+LEFTOVER_SAVE_RISK_REASON = (
+    "HIGH RISK: known game folder may contain saves, configs, settings, or mods"
+)
 
 SKIP_FOLDER_NAMES = {
     "$recycle.bin",
@@ -36,9 +39,12 @@ SKIP_FOLDER_NAMES = {
     "adobe",
     "amd",
     "arduino",
+    "arduino-ide-updater",
     "battle.net",
     "blizzard entertainment",
+    "bravesoftware",
     "code",
+    "discord",
     "docker",
     "ea desktop",
     "electronic arts",
@@ -64,6 +70,8 @@ SKIP_FOLDER_NAMES = {
     "package cache",
     "packages",
     "pip",
+    "programs",
+    "python",
     "riot client",
     "riot games",
     "raspberry pi",
@@ -80,7 +88,13 @@ SKIP_FOLDER_NAMES = {
     "zoom",
 }
 
+SKIP_NAME_PREFIXES = {
+    "com.adobe.",
+    "mozilla-",
+}
+
 SKIP_PATH_TERMS = {
+    "appdata/local/programs",
     "battle.net/cache",
     "ea desktop/cache",
     "epicgameslauncher/saved",
@@ -88,6 +102,41 @@ SKIP_PATH_TERMS = {
     "steam/steamapps",
     "steamapps/common",
     "windowsapps",
+}
+
+KNOWN_GAME_NAMES = {
+    "counterstrike2",
+    "citra",
+    "easportsfc25",
+    "eldenring",
+    "fc25",
+    "hogwartslegacy",
+    "minecraft",
+}
+
+KNOWN_GAME_LAUNCHERS_AND_PLATFORMS = {
+    "battlenet",
+    "blizzardentertainment",
+    "eadesktop",
+    "eagames",
+    "easports",
+    "epicgames",
+    "epicgameslauncher",
+    "goggalaxy",
+    "origin",
+    "riotclient",
+    "riotgames",
+    "steam",
+    "ubisoft",
+    "ubisoftgamelauncher",
+    "xbox",
+    "xboxgames",
+}
+
+SAVE_RISK_GAME_NAMES = {
+    "citra",
+    "eldenring",
+    "minecraft",
 }
 
 
@@ -116,6 +165,7 @@ def scan_leftovers(
     max_depth: int = 3,
     limit: int = 100,
     include_installed: bool = False,
+    include_save_risk: bool = False,
     progress: ProgressCallback | None = None,
 ) -> list[ScanResult]:
     roots = leftover_roots(custom_roots or [])
@@ -140,6 +190,11 @@ def scan_leftovers(
             if size < min_size:
                 continue
             app_name = likely_app_name(candidate)
+            if not is_known_game_related(app_name):
+                continue
+            save_risk = is_save_risk_game(app_name)
+            if save_risk and not include_save_risk:
+                continue
             status, match = detect_install_status(app_name, install_index)
             if status == INSTALLED and not include_installed:
                 continue
@@ -148,7 +203,7 @@ def scan_leftovers(
                 candidate,
                 size,
                 REVIEW,
-                leftover_reason(status, match),
+                leftover_reason(status, match, save_risk=save_risk),
                 "Leftover",
                 status,
                 match.name if match else None,
@@ -172,7 +227,9 @@ def likely_app_name(path: Path) -> str:
     return name or path.name
 
 
-def leftover_reason(status: str, match: InstalledApp | None) -> str:
+def leftover_reason(status: str, match: InstalledApp | None, *, save_risk: bool = False) -> str:
+    if save_risk:
+        return LEFTOVER_SAVE_RISK_REASON
     if status == INSTALLED:
         if match is not None:
             return f"{LEFTOVER_REASON_INSTALLED}: {match.name}"
@@ -180,6 +237,15 @@ def leftover_reason(status: str, match: InstalledApp | None) -> str:
     if status == NOT_INSTALLED:
         return LEFTOVER_REASON_NOT_INSTALLED
     return LEFTOVER_REASON_UNKNOWN
+
+
+def is_known_game_related(app_name: str) -> bool:
+    normalized = normalize_name(app_name)
+    return normalized in KNOWN_GAME_NAMES or normalized in KNOWN_GAME_LAUNCHERS_AND_PLATFORMS
+
+
+def is_save_risk_game(app_name: str) -> bool:
+    return normalize_name(app_name) in SAVE_RISK_GAME_NAMES
 
 
 def detect_install_status(app_name: str, install_index: InstallIndex) -> tuple[str, InstalledApp | None]:
@@ -512,6 +578,8 @@ def should_skip_leftover_candidate(path: Path, skipped_roots: list[Path]) -> boo
     name = path.name.lower()
     if name in SKIP_FOLDER_NAMES:
         return True
+    if any(name.startswith(prefix) for prefix in SKIP_NAME_PREFIXES):
+        return True
     text = path.as_posix().lower()
     if any(term in text for term in SKIP_PATH_TERMS):
         return True
@@ -559,6 +627,8 @@ def leftover_folder_size(path: Path, skipped_roots: list[Path]) -> int:
 def should_skip_leftover_size_dir(path: Path, skipped_roots: list[Path]) -> bool:
     name = path.name.lower()
     if name in SKIP_FOLDER_NAMES:
+        return True
+    if any(name.startswith(prefix) for prefix in SKIP_NAME_PREFIXES):
         return True
     text = path.as_posix().lower()
     if any(term in text for term in SKIP_PATH_TERMS):
