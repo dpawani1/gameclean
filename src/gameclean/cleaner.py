@@ -95,6 +95,21 @@ def clean_folder_contents(path: Path) -> DeleteStats:
     return stats
 
 
+def delete_folder(path: Path) -> DeleteStats:
+    stats = DeleteStats()
+    try:
+        is_junction = getattr(path, "is_junction", lambda: False)
+        if path.is_symlink() or is_junction() or not path.is_dir():
+            stats.failed_items += 1
+            return stats
+    except OSError:
+        stats.failed_items += 1
+        return stats
+
+    _delete_directory(path, stats)
+    return stats
+
+
 def path_matches_safety_blocklist(path: Path) -> bool:
     text = path.as_posix().lower()
     return any(term in text for term in SAFETY_BLOCKLIST)

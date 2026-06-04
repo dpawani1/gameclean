@@ -6,6 +6,7 @@ import unittest
 
 from gameclean.cleaner import (
     clean_folder_contents,
+    delete_folder,
     filter_nonzero_review_results,
     is_deletion_allowed,
 )
@@ -49,6 +50,21 @@ class CleanerTests(unittest.TestCase):
             self.assertTrue(outside.exists())
             self.assertFalse(link.exists())
             self.assertEqual(stats.files_deleted, 1)
+            self.assertEqual(stats.failed_items, 0)
+
+    def test_delete_folder_deletes_selected_folder_itself(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            selected = Path(temp_dir) / "OldGame"
+            nested = selected / "nested"
+            nested.mkdir(parents=True)
+            (selected / "leftover.bin").write_text("leftover", encoding="utf-8")
+            (nested / "nested.bin").write_text("nested", encoding="utf-8")
+
+            stats = delete_folder(selected)
+
+            self.assertFalse(selected.exists())
+            self.assertEqual(stats.files_deleted, 2)
+            self.assertEqual(stats.folders_deleted, 2)
             self.assertEqual(stats.failed_items, 0)
 
     def test_deletion_safety_blocks_requested_terms(self) -> None:
