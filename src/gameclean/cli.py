@@ -91,7 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--show-empty",
         action="store_true",
-        help="show 0 B review-only folders that are hidden by default",
+        help="accepted for compatibility; 0 B folders are shown by default",
     )
     scan_parser.set_defaults(command="scan")
 
@@ -216,11 +216,8 @@ def print_text_list(values: list[str], empty: str) -> None:
 
 
 def print_scan_report(results: list[ScanResult], *, show_empty: bool = False) -> None:
-    visible_results = [
-        result
-        for result in results
-        if show_empty or result.category != REVIEW or result.size_bytes > 0
-    ]
+    del show_empty
+    visible_results = results
     safe_results = [result for result in visible_results if result.category == SAFE]
     review_results = [result for result in visible_results if result.category == REVIEW]
 
@@ -248,8 +245,9 @@ def grouped_results(results: list[ScanResult]) -> list[tuple[str, list[ScanResul
     groups = [
         ("GPU caches", lambda result: result.source == "GPU"),
         ("Steam caches", lambda result: result.source == "Steam"),
-        ("Launcher caches", lambda result: result.source not in {"GPU", "Steam", "Game-specific", "Discovery"}),
-        ("Game-specific review folders", lambda result: result.source in {"Game-specific", "Discovery"}),
+        ("Launcher caches", lambda result: result.source == "Launcher"),
+        ("Game-specific review folders", lambda result: result.source == "Game-specific"),
+        ("Other app review folders", lambda result: result.source == "Other app"),
     ]
     grouped: list[tuple[str, list[ScanResult]]] = []
     for name, predicate in groups:
@@ -281,3 +279,6 @@ def print_section(title: str, results: list[ScanResult]) -> None:
         print(f"   Size: {format_size(result.size_bytes)}")
         print(f"   Reason: {result.reason}")
         print()
+    total = sum(result.size_bytes for result in results)
+    print(f"Subtotal: {format_size(total)} across {len(results)} folders")
+    print()

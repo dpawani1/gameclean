@@ -137,163 +137,167 @@ def known_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
     for target in gpu_targets(custom_roots):
         targets.append(target)
 
+    launcher_reason = LAUNCHER_REASON
+
     add(
         "Epic Games Launcher webcache",
         env_join("LOCALAPPDATA", "EpicGamesLauncher", "Saved", "webcache"),
-        SAFE,
-        "Known Epic Games Launcher web cache",
-        "Epic",
+        REVIEW,
+        launcher_reason,
+        "Launcher",
     )
     epic_saved = env_join("LOCALAPPDATA", "EpicGamesLauncher", "Saved")
     if epic_saved and path_exists_dir(epic_saved):
         for path in safe_glob(epic_saved, "webcache_*"):
-            add("Epic Games Launcher webcache", path, SAFE, "Known Epic Games Launcher web cache", "Epic")
+            add("Epic Games Launcher webcache", path, REVIEW, launcher_reason, "Launcher")
     add(
         "Epic Games Launcher Logs",
         env_join("LOCALAPPDATA", "EpicGamesLauncher", "Saved", "Logs"),
         REVIEW,
-        "Launcher logs; review before deleting",
-        "Epic",
+        launcher_reason,
+        "Launcher",
     )
 
-    add("EA App Cache", env_join("LOCALAPPDATA", "Electronic Arts", "EA Desktop", "Cache"), SAFE, "Known EA App cache", "EA")
+    add("EA App Cache", env_join("LOCALAPPDATA", "Electronic Arts", "EA Desktop", "Cache"), REVIEW, launcher_reason, "Launcher")
     add(
         "EA App Logs",
         env_join("LOCALAPPDATA", "Electronic Arts", "EA Desktop", "Logs"),
         REVIEW,
-        "Launcher logs; review before deleting",
-        "EA",
+        launcher_reason,
+        "Launcher",
     )
-    add("Origin Cache", env_join("LOCALAPPDATA", "Origin", "Cache"), SAFE, "Known Origin launcher cache", "EA")
+    add("Origin Cache", env_join("LOCALAPPDATA", "Origin", "Cache"), REVIEW, launcher_reason, "Launcher")
     add(
         "Origin DownloadCache",
         env_join("PROGRAMDATA", "Origin", "DownloadCache"),
-        SAFE,
-        "Known Origin download cache",
-        "EA",
+        REVIEW,
+        launcher_reason,
+        "Launcher",
     )
-    add("Origin Roaming Cache", env_join("APPDATA", "Origin", "Cache"), SAFE, "Known Origin launcher cache", "EA")
+    add("Origin Roaming Cache", env_join("APPDATA", "Origin", "Cache"), REVIEW, launcher_reason, "Launcher")
     add(
         "EA Services License",
         env_join("PROGRAMDATA", "Electronic Arts", "EA Services", "License"),
         REVIEW,
-        "License/session-related data; review only",
-        "EA",
+        launcher_reason,
+        "Launcher",
     )
 
-    add("Battle.net Cache", env_join("PROGRAMDATA", "Battle.net", "Cache"), SAFE, "Known Battle.net cache", "Battle.net")
+    add("Battle.net Cache", env_join("PROGRAMDATA", "Battle.net", "Cache"), REVIEW, launcher_reason, "Launcher")
     add(
         "Blizzard Battle.net Cache",
         env_join("PROGRAMDATA", "Blizzard Entertainment", "Battle.net", "Cache"),
-        SAFE,
-        "Known Battle.net cache",
-        "Battle.net",
+        REVIEW,
+        launcher_reason,
+        "Launcher",
     )
-    add("Local Battle.net Cache", env_join("LOCALAPPDATA", "Battle.net", "Cache"), SAFE, "Known Battle.net cache", "Battle.net")
-    add("Roaming Battle.net Cache", env_join("APPDATA", "Battle.net", "Cache"), SAFE, "Known Battle.net cache", "Battle.net")
+    add("Local Battle.net Cache", env_join("LOCALAPPDATA", "Battle.net", "Cache"), REVIEW, launcher_reason, "Launcher")
+    add("Roaming Battle.net Cache", env_join("APPDATA", "Battle.net", "Cache"), REVIEW, launcher_reason, "Launcher")
     add(
         "Battle.net Logs",
         env_join("PROGRAMDATA", "Battle.net", "Logs"),
         REVIEW,
-        "Launcher logs; review before deleting",
-        "Battle.net",
+        launcher_reason,
+        "Launcher",
     )
 
     add(
         "Riot Client Cache",
         env_join("LOCALAPPDATA", "Riot Games", "Riot Client", "Cache"),
-        SAFE,
-        "Known Riot Client cache",
-        "Riot",
+        REVIEW,
+        launcher_reason,
+        "Launcher",
     )
     add(
         "Riot Client Logs",
         env_join("LOCALAPPDATA", "Riot Games", "Riot Client", "Logs"),
         REVIEW,
-        "Launcher logs; review before deleting",
-        "Riot",
+        launcher_reason,
+        "Launcher",
     )
     add(
         "Riot Metadata",
         env_join("PROGRAMDATA", "Riot Games", "Metadata"),
         REVIEW,
-        "Launcher metadata; review only",
-        "Riot",
+        launcher_reason,
+        "Launcher",
     )
 
     add(
         "Ubisoft Connect cache",
         env_join("LOCALAPPDATA", "Ubisoft Game Launcher", "cache"),
-        SAFE,
-        "Known Ubisoft Connect launcher cache",
-        "Ubisoft",
+        REVIEW,
+        launcher_reason,
+        "Launcher",
     )
     for program_env in ("PROGRAMFILES(X86)", "PROGRAMFILES"):
         add(
             "Ubisoft Connect install cache",
             env_join(program_env, "Ubisoft", "Ubisoft Game Launcher", "cache"),
-            SAFE,
-            "Known Ubisoft Connect launcher cache",
-            "Ubisoft",
+            REVIEW,
+            launcher_reason,
+            "Launcher",
         )
         add(
             "Ubisoft Connect logs",
             env_join(program_env, "Ubisoft", "Ubisoft Game Launcher", "logs"),
             REVIEW,
-            "Launcher logs; review before deleting",
-            "Ubisoft",
+            launcher_reason,
+            "Launcher",
         )
 
-    add("GOG Galaxy webcache", env_join("PROGRAMDATA", "GOG.com", "Galaxy", "webcache"), SAFE, "Known GOG Galaxy web cache", "GOG")
-    add("GOG Galaxy local webcache", env_join("LOCALAPPDATA", "GOG.com", "Galaxy", "webcache"), SAFE, "Known GOG Galaxy web cache", "GOG")
+    add("GOG Galaxy webcache", env_join("PROGRAMDATA", "GOG.com", "Galaxy", "webcache"), REVIEW, launcher_reason, "Launcher")
+    add("GOG Galaxy local webcache", env_join("LOCALAPPDATA", "GOG.com", "Galaxy", "webcache"), REVIEW, launcher_reason, "Launcher")
     add(
         "GOG Galaxy Logs",
         env_join("LOCALAPPDATA", "GOG.com", "Galaxy", "Logs"),
         REVIEW,
-        "Launcher logs; review before deleting",
-        "GOG",
+        launcher_reason,
+        "Launcher",
     )
 
-    add("Minecraft logs", env_join("APPDATA", ".minecraft", "logs"), REVIEW, "Minecraft logs; review before deleting", "Minecraft")
+    game_reason = GAME_SPECIFIC_REASON
+
+    add("Minecraft logs", env_join("APPDATA", ".minecraft", "logs"), REVIEW, game_reason, "Game-specific")
     add(
         "Minecraft crash reports",
         env_join("APPDATA", ".minecraft", "crash-reports"),
         REVIEW,
-        "Minecraft crash reports; review before deleting",
-        "Minecraft",
+        game_reason,
+        "Game-specific",
     )
     add(
         "Minecraft assets",
         env_join("APPDATA", ".minecraft", "assets"),
         REVIEW,
-        "Minecraft asset cache can be large; review only",
-        "Minecraft",
+        game_reason,
+        "Game-specific",
     )
 
-    add("Roblox logs", env_join("LOCALAPPDATA", "Roblox", "logs"), REVIEW, "Roblox logs; review before deleting", "Roblox")
+    add("Roblox logs", env_join("LOCALAPPDATA", "Roblox", "logs"), REVIEW, launcher_reason, "Launcher")
     add(
         "Roblox Downloads",
         env_join("LOCALAPPDATA", "Roblox", "Downloads"),
         REVIEW,
-        "Roblox downloads; review before deleting",
-        "Roblox",
+        launcher_reason,
+        "Launcher",
     )
 
     for discord in ("discord", "Discord", "discordcanary", "discordptb"):
-        add(f"{discord} Cache", env_join("APPDATA", discord, "Cache"), REVIEW, "Gaming-adjacent overlay/app cache; review only", "Discord")
+        add(f"{discord} Cache", env_join("APPDATA", discord, "Cache"), REVIEW, OTHER_APP_REASON, "Other app")
         add(
             f"{discord} Code Cache",
             env_join("APPDATA", discord, "Code Cache"),
             REVIEW,
-            "Gaming-adjacent overlay/app cache; review only",
-            "Discord",
+            OTHER_APP_REASON,
+            "Other app",
         )
         add(
             f"{discord} GPUCache",
             env_join("APPDATA", discord, "GPUCache"),
             REVIEW,
-            "Gaming-adjacent overlay/app cache; review only",
-            "Discord",
+            OTHER_APP_REASON,
+            "Other app",
         )
 
     for root in custom_roots or []:
@@ -309,17 +313,33 @@ def custom_known_targets(root: Path) -> list[ScanTarget]:
             ScanTarget(
                 "Epic Games Launcher webcache",
                 local / "EpicGamesLauncher" / "Saved" / "webcache",
-                SAFE,
-                "Known Epic Games Launcher web cache",
-                "Epic",
+                REVIEW,
+                LAUNCHER_REASON,
+                "Launcher",
             )
         )
         epic_saved = local / "EpicGamesLauncher" / "Saved"
         if path_exists_dir(epic_saved):
             for path in safe_glob(epic_saved, "webcache_*"):
-                targets.append(ScanTarget("Epic Games Launcher webcache", path, SAFE, "Known Epic Games Launcher web cache", "Epic"))
+                targets.append(
+                    ScanTarget(
+                        "Epic Games Launcher webcache",
+                        path,
+                        REVIEW,
+                        LAUNCHER_REASON,
+                        "Launcher",
+                    )
+                )
     for programdata in programdata_roots([root]):
-        targets.append(ScanTarget("Battle.net Cache", programdata / "Battle.net" / "Cache", SAFE, "Known Battle.net cache", "Battle.net"))
+        targets.append(
+            ScanTarget(
+                "Battle.net Cache",
+                programdata / "Battle.net" / "Cache",
+                REVIEW,
+                LAUNCHER_REASON,
+                "Launcher",
+            )
+        )
     return targets
 
 
@@ -459,6 +479,7 @@ GAME_CACHE_SUBPATHS = (
     ("Cache",),
     ("cache",),
     ("Caches",),
+    ("Code Cache",),
     ("ShaderCache",),
     ("shadercache",),
     ("Saved", "DerivedDataCache"),
@@ -472,6 +493,43 @@ GAME_CACHE_SUBPATHS = (
     ("Temp",),
     ("temp",),
 )
+
+LAUNCHER_APPDATA_NAMES = {
+    "battle.net",
+    "blizzard entertainment",
+    "curseforge",
+    "ea",
+    "electronic arts",
+    "epicgameslauncher",
+    "faceit",
+    "gog.com",
+    "minecraft launcher",
+    "modrinth",
+    "origin",
+    "riot games",
+    "riot-client-ux",
+    "roblox",
+    "ubisoft game launcher",
+}
+
+GAME_APPDATA_NAMES = {
+    ".minecraft",
+    "cassettebeasts",
+    "dungeons",
+    "ea sports fc 25",
+    "fortnitegame",
+    "hogwarts legacy",
+    "marvel",
+    "marvelrivals_launcher",
+    "multiversus",
+    "pioneergame",
+    "slaythespire2",
+    "valorant",
+}
+
+GAME_SPECIFIC_REASON = "Game cache/log/crash folder found by bounded scan; review before deleting."
+LAUNCHER_REASON = "Gaming launcher cache/log folder; review before deleting unless later confirmed safe."
+OTHER_APP_REASON = "Cache/log folder found in AppData; not clearly gaming-related, review before deleting."
 
 
 def game_specific_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
@@ -494,6 +552,8 @@ def game_specific_targets(custom_roots: list[Path] | None = None) -> list[ScanTa
                 continue
             if is_dangerous_path(game_dir):
                 continue
+            source = review_source_for_root_child(root, game_dir)
+            reason = review_reason_for_source(source)
             for parts in GAME_CACHE_SUBPATHS:
                 path = game_dir.joinpath(*parts)
                 if is_dangerous_path(path):
@@ -503,11 +563,50 @@ def game_specific_targets(custom_roots: list[Path] | None = None) -> list[ScanTa
                         f"{game_dir.name} {'/'.join(parts)}",
                         path,
                         REVIEW,
-                        "Game cache/log/crash folder found by bounded fast scan; review before deleting",
-                        "Game-specific",
+                        reason,
+                        source,
                     )
                 )
     return targets
+
+
+def review_source_for_root_child(root: Path, child: Path) -> str:
+    if is_appdata_root(root):
+        return appdata_source_for_dir(child)
+    return "Game-specific"
+
+
+def is_appdata_root(path: Path) -> bool:
+    parts = [part.lower() for part in path.parts]
+    return len(parts) >= 2 and parts[-2:] in (["appdata", "local"], ["appdata", "roaming"])
+
+
+def appdata_source_for_dir(path: Path) -> str:
+    name = path.name.lower()
+    if name in LAUNCHER_APPDATA_NAMES:
+        return "Launcher"
+    if name in GAME_APPDATA_NAMES or looks_like_game_appdata_dir(path):
+        return "Game-specific"
+    return "Other app"
+
+
+def looks_like_game_appdata_dir(path: Path) -> bool:
+    name = path.name.lower()
+    if name.endswith("game"):
+        return True
+    saved = path / "Saved"
+    if not path_exists_dir(saved):
+        return False
+    unreal_cache_names = {"DerivedDataCache", "Logs", "Crashes"}
+    return any(path_exists_dir(saved / cache_name) for cache_name in unreal_cache_names)
+
+
+def review_reason_for_source(source: str) -> str:
+    if source == "Game-specific":
+        return GAME_SPECIFIC_REASON
+    if source == "Launcher":
+        return LAUNCHER_REASON
+    return OTHER_APP_REASON
 
 
 def deep_discovery_targets(
@@ -536,7 +635,10 @@ def deep_discovery_targets_for_root(root: Path, existing_keys: set[str], *, max_
         category, reason = classify_candidate(path)
         if category == SKIP:
             continue
-        yield ScanTarget(candidate_name(path), path, category, reason, "Discovery")
+        source = discovery_source_for_path(path)
+        if source in {"Game-specific", "Launcher", "Other app"}:
+            reason = review_reason_for_source(source)
+        yield ScanTarget(candidate_name(path), path, category, reason, source)
 
 
 def has_reported_descendant(path: Path, existing_keys: set[str]) -> bool:
@@ -559,6 +661,22 @@ def classify_candidate(path: Path) -> tuple[str, str]:
     if "packages" in parts:
         return REVIEW, "Microsoft Store/Xbox package cache-like folder; review only"
     return REVIEW, "Cache-like folder found in gaming/user data; review before deleting"
+
+
+def discovery_source_for_path(path: Path) -> str:
+    owner = appdata_owner_dir(path)
+    if owner is not None:
+        return appdata_source_for_dir(owner)
+    return "Game-specific"
+
+
+def appdata_owner_dir(path: Path) -> Path | None:
+    parts = path.parts
+    lowered = [part.lower() for part in parts]
+    for index in range(len(parts) - 2):
+        if lowered[index] == "appdata" and lowered[index + 1] in {"local", "roaming"}:
+            return Path(*parts[: index + 3])
+    return None
 
 
 def candidate_name(path: Path) -> str:
