@@ -1,6 +1,6 @@
 # 🎮 GameClean by Darsh Pawani
 
-👑 A command-line tool that clears hidden game junk so titles like CS2, Fortnite, Valorant, and EA FC can feel smoother and run faster
+👑 A command-line tool that clears hidden game junk so titles like CS2, Fortnite, Valorant, and EA FC can feel smoother and run faster (Made for Windows)
 
 ---
 
@@ -16,7 +16,7 @@ GameClean uses `uv`, a fast Python package/tool manager.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**macOS / Linux**
+**Linux**
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
