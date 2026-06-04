@@ -1,10 +1,37 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 import re
 from pathlib import Path
 
 from .utils import get_env_path, path_exists_dir
+
+IMPORTANT_WINDOWS_ROOTS = ("LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "USERPROFILE")
+
+SKIP_WINDOWS_USER_DIRS = {
+    "all users",
+    "default",
+    "default user",
+}
+
+WSL_WINDOWS_ROOT_CANDIDATES = [
+    Path("/mnt/c/Users"),
+    Path("/mnt/c/ProgramData"),
+    Path("/mnt/c/Program Files"),
+    Path("/mnt/c/Program Files (x86)"),
+    Path("/mnt/c/XboxGames"),
+    Path("/mnt/d/Games"),
+    Path("/mnt/d/SteamLibrary"),
+    Path("/mnt/e/Games"),
+    Path("/mnt/e/SteamLibrary"),
+]
+
+
+@dataclass(frozen=True)
+class RootDiagnostics:
+    existing_roots: list[Path]
+    missing_windows_roots: list[str]
 
 
 def env_join(env_name: str, *parts: str) -> Path | None:
@@ -55,14 +82,96 @@ def common_game_roots() -> list[Path]:
         get_env_path("PROGRAMDATA"),
         env_join("LOCALAPPDATA", "Packages"),
         *common_windows_roots(),
+        *wsl_non_user_windows_roots(),
+        *wsl_user_roots(),
     ]
     return first_existing(dedupe_paths([path for path in candidates if path is not None]))
+
+
+def root_diagnostics(custom_roots: list[Path] | None = None) -> RootDiagnostics:
+    roots = [
+        *common_game_roots(),
+        *steam_roots(),
+        *(custom_scan_roots(custom_roots or [])),
+    ]
+    missing = missing_important_windows_roots()
+    return RootDiagnostics(first_existing(dedupe_paths(roots)), missing)
+
+
+def missing_important_windows_roots() -> list[str]:
+    missing: list[str] = []
+    for env_name in IMPORTANT_WINDOWS_ROOTS:
+        root = get_env_path(env_name)
+        if root is None:
+            missing.append(f"{env_name} not set")
+        elif not path_exists_dir(root):
+            missing.append(f"{env_name} missing: {root}")
+    return missing
+
+
+def wsl_windows_roots() -> list[Path]:
+    return first_existing(dedupe_paths(WSL_WINDOWS_ROOT_CANDIDATES))
+
+
+def wsl_non_user_windows_roots() -> list[Path]:
+    return first_existing([path for path in WSL_WINDOWS_ROOT_CANDIDATES if path != Path("/mnt/c/Users")])
+
+
+def wsl_user_roots() -> list[Path]:
+    users_root = Path("/mnt/c/Users")
+    if not path_exists_dir(users_root):
+        return []
+    return windows_user_scan_roots(users_root)
+
+
+def windows_user_scan_roots(users_root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    try:
+        users = sorted(users_root.iterdir(), key=lambda path: path.name.lower())
+    except OSError:
+        return []
+
+    for user_root in users:
+        if not path_exists_dir(user_root):
+            continue
+        if user_root.name.lower() in SKIP_WINDOWS_USER_DIRS:
+            continue
+        candidates.extend(
+            [
+                user_root / "AppData" / "Local",
+                user_root / "AppData" / "Roaming",
+                user_root / "Documents",
+                user_root / "Documents" / "My Games",
+                user_root / "Saved Games",
+                user_root / "Videos" / "Captures",
+            ]
+        )
+    return first_existing(dedupe_paths(candidates))
+
+
+def custom_scan_roots(custom_roots: list[Path]) -> list[Path]:
+    candidates: list[Path] = []
+    for root in custom_roots:
+        candidates.append(root)
+        candidates.extend(
+            [
+                root / "ProgramData",
+                root / "Program Files",
+                root / "Program Files (x86)",
+                root / "XboxGames",
+                root / "Steam",
+            ]
+        )
+        candidates.extend(windows_user_scan_roots(root / "Users"))
+    return first_existing(dedupe_paths(candidates))
 
 
 def steam_roots() -> list[Path]:
     roots = [
         Path("C:/Program Files (x86)/Steam"),
         Path("C:/Program Files/Steam"),
+        Path("/mnt/c/Program Files (x86)/Steam"),
+        Path("/mnt/c/Program Files/Steam"),
     ]
 
     program_files_x86 = get_env_path("PROGRAMFILES(X86)")

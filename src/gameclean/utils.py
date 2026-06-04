@@ -154,8 +154,15 @@ def should_skip_dir(name: str, path: Path) -> bool:
     lowered_name = name.lower()
     if lowered_name in SKIP_DIR_NAMES:
         return True
-    text = normalize_path_text(path)
-    return any(part in text for part in SKIP_PATH_PARTS)
+    parts = [part.lower() for part in path.parts]
+    joined = "/".join(parts)
+    for skipped in SKIP_PATH_PARTS:
+        if "/" in skipped:
+            if skipped in joined:
+                return True
+        elif skipped in parts:
+            return True
+    return False
 
 
 def safe_walk_dirs(root: Path, max_depth: int = 5) -> Iterator[Path]:
