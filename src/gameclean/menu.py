@@ -71,6 +71,7 @@ def leftovers_args() -> argparse.Namespace:
         limit=100,
         include_installed=False,
         show_status=False,
+        include_save_risk=False,
         dry_run=False,
         review=True,
     )
