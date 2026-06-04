@@ -17,7 +17,7 @@ from .cleaner import (
     safety_skipped_results,
 )
 from .installers import DEFAULT_INSTALLER_MIN_SIZE, InstallerResult, is_installer_deletion_allowed, scan_installers
-from .leftovers import DEFAULT_MIN_SIZE, scan_leftovers
+from .leftovers import INSTALLED, NOT_INSTALLED, UNKNOWN, DEFAULT_MIN_SIZE, scan_leftovers
 from .paths import detect_os_mode, root_diagnostics
 from .scanner import REVIEW, SAFE, ScanProgress, ScanResult, scan
 from .utils import format_size
@@ -32,133 +32,158 @@ def main(argv: Sequence[str] | None = None) -> None:
     maybe_print_windows_environment_note(args)
 
     if args.command == "scan":
-        custom_roots = [Path(root).expanduser() for root in args.root]
-        if args.show_roots:
-            print_roots(custom_roots)
-            return
-        progress = ProgressPrinter()
-        if args.deep:
-            print("Deep scan may take several minutes because it searches large folders.")
-            print()
-            try:
-                results = scan(
-                    custom_roots,
-                    deep=True,
-                    max_depth=args.max_depth,
-                    review_limit=args.limit,
-                    progress=progress.update,
-                )
-            finally:
-                progress.finish()
-        else:
-            print("Running fast scan. Use `gameclean scan --deep` to search more aggressively.")
-            print()
-            try:
-                results = scan(custom_roots, review_limit=args.limit, progress=progress.update)
-            finally:
-                progress.finish()
-        print_scan_report(results, show_empty=args.show_empty)
+        handle_scan(args)
         return
 
     if args.command == "clean":
-        custom_roots = [Path(root).expanduser() for root in args.root]
-        print_clean_header()
-        progress = ProgressPrinter(icon="🔍")
-        print("🔍 Scanning for cleanup targets...")
+        handle_clean(args)
+        return
+
+    if args.command == "leftovers":
+        handle_leftovers(args)
+        return
+
+    if args.command == "installers":
+        handle_installers(args)
+        return
+
+    from .menu import interactive_menu
+
+    interactive_menu()
+
+
+def handle_scan(args: argparse.Namespace) -> None:
+    custom_roots = [Path(root).expanduser() for root in args.root]
+    if args.show_roots:
+        print_roots(custom_roots)
+        return
+    progress = ProgressPrinter()
+    if args.deep:
+        print("Deep scan may take several minutes because it searches large folders.")
+        print()
+        try:
+            results = scan(
+                custom_roots,
+                deep=True,
+                max_depth=args.max_depth,
+                review_limit=args.limit,
+                progress=progress.update,
+            )
+        finally:
+            progress.finish()
+    else:
+        print("Running fast scan. Use `gameclean scan --deep` to search more aggressively.")
+        print()
         try:
             results = scan(custom_roots, review_limit=args.limit, progress=progress.update)
         finally:
             progress.finish()
-        if args.dry_run:
-            print_clean_dry_run(results)
-            return
-        if args.safe:
-            print_final_clean_report(clean_selected_targets(collect_safe_cleanup_targets(results)))
-            return
-        try:
-            selection = collect_review_cleanup_targets(results)
-        except KeyboardInterrupt:
-            print()
-            print("Cleanup cancelled before deletion. No files were deleted.")
-            return
-        print_final_clean_report(clean_selected_targets(selection))
-        return
+    print_scan_report(results, show_empty=args.show_empty)
 
-    if args.command == "leftovers":
-        custom_roots = [Path(root).expanduser() for root in args.root]
-        if args.review:
-            print_leftovers_cleanup_header()
-        else:
-            print_leftovers_report_header()
-        progress = ProgressPrinter(icon="📦")
-        if args.deep:
-            print("Deep leftover scan may take several minutes.")
-            print()
-        print("📦 Searching for leftover game folders...")
-        try:
-            results = scan_leftovers(
-                custom_roots,
-                min_size=args.min,
-                deep=args.deep,
-                max_depth=args.max_depth,
-                limit=args.limit,
-                progress=progress.update,
-            )
-        finally:
-            progress.finish()
-        if args.dry_run:
-            print_leftovers_dry_run(results)
-            return
-        if not args.review:
-            print_leftovers_report(results)
-            return
-        try:
-            selection = collect_leftover_cleanup_targets(results)
-        except KeyboardInterrupt:
-            print()
-            print("Leftover cleanup cancelled before deletion. No files were deleted.")
-            return
-        print_final_leftover_report(delete_selected_leftovers(selection))
-        return
 
-    if args.command == "installers":
-        custom_roots = [Path(root).expanduser() for root in args.root]
-        if args.review:
-            print_installers_cleanup_header()
-        else:
-            print_installers_report_header()
-        progress = ProgressPrinter(icon="📦")
-        if args.deep:
-            print("Deep installer scan may take several minutes.")
-            print()
-        print("📦 Searching for old installers and packages...")
-        try:
-            results = scan_installers(
-                custom_roots,
-                min_size=args.min,
-                deep=args.deep,
-                max_depth=args.max_depth,
-                limit=args.limit,
-                progress=progress.update,
-            )
-        finally:
-            progress.finish()
-        if args.dry_run:
-            print_installers_dry_run(results)
-            return
-        if not args.review:
-            print_installers_report(results)
-            return
-        try:
-            selection = collect_installer_cleanup_targets(results)
-        except KeyboardInterrupt:
-            print()
-            print("Installer/package cleanup cancelled before deletion. No files were deleted.")
-            return
-        print_final_installer_report(delete_selected_installers(selection))
+def handle_clean(args: argparse.Namespace) -> None:
+    custom_roots = [Path(root).expanduser() for root in args.root]
+    print_clean_header()
+    progress = ProgressPrinter(icon="🔍")
+    print("GameClean will scan first, then ask before deleting review items.")
+    print("🔍 Scanning for cleanup targets...")
+    try:
+        results = scan(custom_roots, review_limit=args.limit, progress=progress.update)
+    finally:
+        progress.finish()
+    if args.dry_run:
+        print_clean_dry_run(results)
         return
+    if args.safe:
+        print_final_clean_report(clean_selected_targets(collect_safe_cleanup_targets(results)))
+        return
+    try:
+        selection = collect_review_cleanup_targets(results)
+    except KeyboardInterrupt:
+        print()
+        print("Cleanup cancelled before deletion. No files were deleted.")
+        return
+    print_final_clean_report(clean_selected_targets(selection))
 
-    parser.print_help()
+
+def handle_leftovers(args: argparse.Namespace) -> None:
+    custom_roots = [Path(root).expanduser() for root in args.root]
+    if args.review:
+        print_leftovers_cleanup_header()
+    else:
+        print_leftovers_report_header()
+    progress = ProgressPrinter(icon="📦")
+    if args.deep:
+        print("Deep leftover scan may take several minutes.")
+        print()
+    if args.review:
+        print("GameClean will scan first, then ask before deleting review items.")
+    print("📦 Searching for leftover game folders...")
+    try:
+        results = scan_leftovers(
+            custom_roots,
+            min_size=args.min,
+            deep=args.deep,
+            max_depth=args.max_depth,
+            limit=args.limit,
+            include_installed=True,
+            progress=progress.update,
+        )
+    finally:
+        progress.finish()
+    visible_results = visible_leftover_results(results, include_installed=args.include_installed)
+    if args.dry_run:
+        print_leftovers_dry_run(visible_results, all_results=results)
+        return
+    if not args.review:
+        print_leftovers_report(visible_results, all_results=results)
+        return
+    try:
+        selection = collect_leftover_cleanup_targets(visible_results, include_installed=args.include_installed)
+    except KeyboardInterrupt:
+        print()
+        print("Leftover cleanup cancelled before deletion. No files were deleted.")
+        return
+    print_final_leftover_report(delete_selected_leftovers(selection))
+
+
+def handle_installers(args: argparse.Namespace) -> None:
+    custom_roots = [Path(root).expanduser() for root in args.root]
+    if args.review:
+        print_installers_cleanup_header()
+    else:
+        print_installers_report_header()
+    progress = ProgressPrinter(icon="📦")
+    if args.deep:
+        print("Deep installer scan may take several minutes.")
+        print()
+    if args.review:
+        print("GameClean will scan first, then ask before deleting review items.")
+    print("📦 Searching for old installers and packages...")
+    try:
+        results = scan_installers(
+            custom_roots,
+            min_size=args.min,
+            deep=args.deep,
+            max_depth=args.max_depth,
+            limit=args.limit,
+            progress=progress.update,
+        )
+    finally:
+        progress.finish()
+    if args.dry_run:
+        print_installers_dry_run(results)
+        return
+    if not args.review:
+        print_installers_report(results)
+        return
+    try:
+        selection = collect_installer_cleanup_targets(results)
+    except KeyboardInterrupt:
+        print()
+        print("Installer/package cleanup cancelled before deletion. No files were deleted.")
+        return
+    print_final_installer_report(delete_selected_installers(selection))
 
 
 def maybe_print_windows_environment_note(args: argparse.Namespace) -> None:
@@ -299,6 +324,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=100,
         metavar="N",
         help="maximum number of leftover results to report (default: 100)",
+    )
+    leftovers_parser.add_argument(
+        "--include-installed",
+        action="store_true",
+        help="show folders for games/apps that still appear to be installed",
+    )
+    leftovers_parser.add_argument(
+        "--show-status",
+        action="store_true",
+        help="show install status in leftover output",
     )
     leftovers_mode = leftovers_parser.add_mutually_exclusive_group()
     leftovers_mode.add_argument(
@@ -773,25 +808,41 @@ def print_leftovers_cleanup_header() -> None:
     print()
 
 
-def print_leftovers_report(results: list[ScanResult]) -> None:
+def visible_leftover_results(results: list[ScanResult], *, include_installed: bool) -> list[ScanResult]:
+    if include_installed:
+        return results
+    return [result for result in results if result.install_status != INSTALLED]
+
+
+def print_leftovers_report(results: list[ScanResult], *, all_results: list[ScanResult] | None = None) -> None:
+    all_results = all_results or results
     print()
     if not results:
         print("No possible leftover folders found.")
         print()
-        print("Totals:")
-        print("Possible leftovers: 0 folders")
-        print("Review-only size: 0 B")
+        print_leftover_totals(results, all_results)
         return
 
     for index, result in enumerate(results, start=1):
         print_leftover_result(index, result)
 
+    print_leftover_totals(results, all_results)
+
+
+def print_leftover_totals(results: list[ScanResult], all_results: list[ScanResult]) -> None:
+    likely_leftovers = [result for result in results if result.install_status == NOT_INSTALLED]
+    unknown = [result for result in results if result.install_status == UNKNOWN]
+    installed_hidden = len([result for result in all_results if result.install_status == INSTALLED and result not in results])
+    review_results = [result for result in results if result.install_status in {NOT_INSTALLED, UNKNOWN}]
     print("Totals:")
-    print(f"Possible leftovers: {len(results)} folders")
-    print(f"Review-only size: {format_size(sum(result.size_bytes for result in results))}")
+    print(f"Likely leftover folders: {len(likely_leftovers)}")
+    print(f"Unknown status folders: {len(unknown)}")
+    print(f"Installed folders hidden: {installed_hidden}")
+    print(f"Review-only size: {format_size(sum(result.size_bytes for result in review_results))}")
 
 
-def print_leftovers_dry_run(results: list[ScanResult]) -> None:
+def print_leftovers_dry_run(results: list[ScanResult], *, all_results: list[ScanResult] | None = None) -> None:
+    all_results = all_results or results
     print()
     print("Leftover folders that would be offered for review:")
     if not results:
@@ -801,9 +852,7 @@ def print_leftovers_dry_run(results: list[ScanResult]) -> None:
         for index, result in enumerate(results, start=1):
             print_leftover_result(index, result)
 
-    print("Totals:")
-    print(f"Possible leftovers: {len(results)} folders")
-    print(f"Total possible leftover size: {format_size(sum(result.size_bytes for result in results))}")
+    print_leftover_totals(results, all_results)
     print()
     print("Dry run only. No files were deleted.")
 
@@ -811,14 +860,23 @@ def print_leftovers_dry_run(results: list[ScanResult]) -> None:
 def print_leftover_result(index: int, result: ScanResult) -> None:
     print(f"{index}. {result.name}")
     print(f"   Category: {result.category}")
+    print(f"   Install status: {result.install_status}")
     print(f"   Path: {result.path}")
     print(f"   Size: {format_size(result.size_bytes)}")
     print(f"   Reason: {result.reason}")
+    if result.install_status == INSTALLED:
+        print("   Hidden by default unless --include-installed is used.")
     print()
 
 
-def collect_leftover_cleanup_targets(results: list[ScanResult]) -> CleanupSelection:
-    prompt_results = [result for result in results if result.size_bytes > 0 and is_deletion_allowed(result)]
+def collect_leftover_cleanup_targets(results: list[ScanResult], *, include_installed: bool = False) -> CleanupSelection:
+    prompt_results = [
+        result
+        for result in results
+        if result.size_bytes > 0
+        and is_deletion_allowed(result)
+        and (include_installed or result.install_status in {NOT_INSTALLED, UNKNOWN})
+    ]
     selected: list[ScanResult] = []
     skipped = 0
 

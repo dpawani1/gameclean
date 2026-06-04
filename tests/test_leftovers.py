@@ -69,6 +69,42 @@ class LeftoverScanTests(unittest.TestCase):
 
             self.assertEqual([result.name for result in results], ["LargestOldGame", "MediumOldGame"])
 
+    def test_scan_leftovers_marks_steam_manifest_match_as_installed_and_hides_by_default(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            local = root / "Users" / "Darsh" / "AppData" / "Local"
+            steamapps = root / "Steam" / "steamapps"
+            for name in ("Hogwarts Legacy", "EA SPORTS FC 25", "Counter-Strike 2"):
+                path = local / name
+                path.mkdir(parents=True)
+                (path / "data.bin").write_bytes(b"a" * 20)
+            steamapps.mkdir(parents=True)
+            (steamapps / "appmanifest_730.acf").write_text(
+                '"AppState"\n{\n    "appid" "730"\n    "name" "Counter-Strike 2"\n}\n',
+                encoding="utf-8",
+            )
+
+            default_results = scan_leftovers([root], min_size=1)
+            all_results = scan_leftovers([root], min_size=1, include_installed=True)
+
+            default_statuses = {result.name: result.install_status for result in default_results}
+            all_statuses = {result.name: result.install_status for result in all_results}
+            self.assertEqual(default_statuses["Hogwarts Legacy"], "NOT_INSTALLED")
+            self.assertEqual(default_statuses["EA SPORTS FC 25"], "NOT_INSTALLED")
+            self.assertNotIn("Counter-Strike 2", default_statuses)
+            self.assertEqual(all_statuses["Counter-Strike 2"], "INSTALLED")
+
+    def test_scan_leftovers_marks_unknown_when_no_install_sources_exist(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            old_game = root / "Users" / "Darsh" / "AppData" / "Local" / "OldGame"
+            old_game.mkdir(parents=True)
+            (old_game / "data.bin").write_bytes(b"a" * 20)
+
+            results = scan_leftovers([root], min_size=1)
+
+            self.assertEqual(results[0].install_status, "UNKNOWN")
+
 
 if __name__ == "__main__":
     unittest.main()

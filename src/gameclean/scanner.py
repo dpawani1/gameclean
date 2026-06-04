@@ -40,6 +40,8 @@ class ScanResult:
     category: str
     reason: str
     source: str
+    install_status: str = "UNKNOWN"
+    installed_match: str | None = None
 
 
 @dataclass(frozen=True)

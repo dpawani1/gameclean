@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
+import re
 
 from .cleaner import is_deletion_allowed
 from .paths import (
@@ -19,7 +22,12 @@ from .scanner import REVIEW, ScanProgress, ScanResult
 from .utils import is_dangerous_path, is_unsafe_link, path_exists_dir, resolved_key
 
 DEFAULT_MIN_SIZE = 100 * 1024 * 1024
-LEFTOVER_REASON = "Large game-related AppData folder that may remain after uninstall"
+NOT_INSTALLED = "NOT_INSTALLED"
+INSTALLED = "INSTALLED"
+UNKNOWN = "UNKNOWN"
+LEFTOVER_REASON_NOT_INSTALLED = "Game data folder found, but no installed game match was detected"
+LEFTOVER_REASON_INSTALLED = "Game data folder found, but the game/app appears to still be installed"
+LEFTOVER_REASON_UNKNOWN = "Game data folder found, but installed game detection was inconclusive"
 
 SKIP_FOLDER_NAMES = {
     "$recycle.bin",
@@ -27,6 +35,7 @@ SKIP_FOLDER_NAMES = {
     ".venv",
     "adobe",
     "amd",
+    "arduino",
     "battle.net",
     "blizzard entertainment",
     "code",
@@ -37,8 +46,15 @@ SKIP_FOLDER_NAMES = {
     "epic games",
     "epic games store",
     "epicgameslauncher",
+    "google",
     "intel",
+    "jetbrains",
+    "lenovo",
+    "matlab",
     "microsoft",
+    "miniforge3",
+    "mozilla",
+    "mysql",
     "my games",
     "node_modules",
     "nvidia",
@@ -50,6 +66,7 @@ SKIP_FOLDER_NAMES = {
     "pip",
     "riot client",
     "riot games",
+    "raspberry pi",
     "site-packages",
     "steam",
     "steamlibrary",
@@ -58,6 +75,7 @@ SKIP_FOLDER_NAMES = {
     "ubisoft",
     "ubisoft game launcher",
     "windowsapps",
+    "wsl",
     "xboxgames",
     "zoom",
 }
@@ -76,6 +94,20 @@ SKIP_PATH_TERMS = {
 ProgressCallback = Callable[[ScanProgress], None]
 
 
+@dataclass(frozen=True)
+class InstalledApp:
+    name: str
+    path: Path | None = None
+    source: str = "generic"
+    appid: str | None = None
+
+
+@dataclass(frozen=True)
+class InstallIndex:
+    apps: tuple[InstalledApp, ...]
+    has_sources: bool
+
+
 def scan_leftovers(
     custom_roots: list[Path] | None = None,
     *,
@@ -83,10 +115,12 @@ def scan_leftovers(
     deep: bool = False,
     max_depth: int = 3,
     limit: int = 100,
+    include_installed: bool = False,
     progress: ProgressCallback | None = None,
 ) -> list[ScanResult]:
     roots = leftover_roots(custom_roots or [])
     skipped_roots = launcher_install_roots(custom_roots or [])
+    install_index = build_install_index(custom_roots or [])
     results: list[ScanResult] = []
     seen: set[str] = set()
 
@@ -105,7 +139,20 @@ def scan_leftovers(
             size = leftover_folder_size(candidate, skipped_roots)
             if size < min_size:
                 continue
-            result = ScanResult(candidate.name, candidate, size, REVIEW, LEFTOVER_REASON, "Leftover")
+            app_name = likely_app_name(candidate)
+            status, match = detect_install_status(app_name, install_index)
+            if status == INSTALLED and not include_installed:
+                continue
+            result = ScanResult(
+                app_name,
+                candidate,
+                size,
+                REVIEW,
+                leftover_reason(status, match),
+                "Leftover",
+                status,
+                match.name if match else None,
+            )
             if not is_deletion_allowed(result):
                 continue
             results.append(result)
@@ -116,6 +163,251 @@ def scan_leftovers(
     if limit <= 0:
         return []
     return sorted_results[:limit]
+
+
+def likely_app_name(path: Path) -> str:
+    name = path.name.strip()
+    if name.startswith("."):
+        name = name[1:]
+    return name or path.name
+
+
+def leftover_reason(status: str, match: InstalledApp | None) -> str:
+    if status == INSTALLED:
+        if match is not None:
+            return f"{LEFTOVER_REASON_INSTALLED}: {match.name}"
+        return LEFTOVER_REASON_INSTALLED
+    if status == NOT_INSTALLED:
+        return LEFTOVER_REASON_NOT_INSTALLED
+    return LEFTOVER_REASON_UNKNOWN
+
+
+def detect_install_status(app_name: str, install_index: InstallIndex) -> tuple[str, InstalledApp | None]:
+    match = find_installed_match(app_name, install_index.apps)
+    if match is not None:
+        return INSTALLED, match
+    if install_index.has_sources:
+        return NOT_INSTALLED, None
+    return UNKNOWN, None
+
+
+def find_installed_match(app_name: str, installed_apps: tuple[InstalledApp, ...]) -> InstalledApp | None:
+    for app in installed_apps:
+        if names_match(app_name, app.name):
+            return app
+        if app.path is not None and names_match(app_name, app.path.name):
+            return app
+    return None
+
+
+def names_match(left: str, right: str) -> bool:
+    left_tokens = normalized_tokens(left)
+    right_tokens = normalized_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+
+    left_joined = "".join(left_tokens)
+    right_joined = "".join(right_tokens)
+    if left_joined == right_joined:
+        return True
+    if len(left_joined) >= 5 and left_joined in right_joined:
+        return True
+    if len(right_joined) >= 5 and right_joined in left_joined:
+        return True
+
+    left_set = set(left_tokens)
+    right_set = set(right_tokens)
+    if left_set <= right_set or right_set <= left_set:
+        return True
+
+    overlap = left_set & right_set
+    return bool(overlap) and len(overlap) >= min(len(left_set), len(right_set), 2)
+
+
+def normalized_tokens(name: str) -> list[str]:
+    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)
+    text = text.lower().replace("&", " and ")
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    tokens = [token for token in text.split() if token not in {"the", "game", "games", "launcher"}]
+    if tokens[:2] == ["ea", "sports"]:
+        tokens = tokens[2:]
+    return tokens
+
+
+def normalize_name(name: str) -> str:
+    return "".join(normalized_tokens(name))
+
+
+def build_install_index(custom_roots: list[Path] | None = None) -> InstallIndex:
+    custom_roots = custom_roots or []
+    apps: list[InstalledApp] = []
+    source_paths: list[Path] = []
+
+    steam_apps, steam_sources = steam_installed_apps(custom_roots)
+    apps.extend(steam_apps)
+    source_paths.extend(steam_sources)
+
+    epic_apps, epic_sources = epic_installed_apps(custom_roots)
+    apps.extend(epic_apps)
+    source_paths.extend(epic_sources)
+
+    folder_apps, folder_sources = folder_installed_apps(custom_roots)
+    apps.extend(folder_apps)
+    source_paths.extend(folder_sources)
+
+    deduped: list[InstalledApp] = []
+    seen: set[tuple[str, str]] = set()
+    for app in apps:
+        key = (normalize_name(app.name), app.path.as_posix().lower() if app.path else "")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(app)
+    return InstallIndex(tuple(deduped), bool(source_paths))
+
+
+def steam_installed_apps(custom_roots: list[Path]) -> tuple[list[InstalledApp], list[Path]]:
+    roots = [*steam_roots(), *[root / "Steam" for root in custom_roots]]
+    libraries: list[Path] = []
+    for root in roots:
+        libraries.extend(steam_libraries(root))
+    libraries = [path for path in dedupe_paths(libraries) if path_exists_dir(path)]
+
+    apps: list[InstalledApp] = []
+    sources: list[Path] = []
+    for library in libraries:
+        steamapps = library / "steamapps"
+        if not path_exists_dir(steamapps):
+            continue
+        sources.append(steamapps)
+        for manifest in sorted(steamapps.glob("appmanifest_*.acf")):
+            app = parse_steam_manifest(manifest, library)
+            if app is not None:
+                apps.append(app)
+    return apps, sources
+
+
+def parse_steam_manifest(path: Path, library: Path) -> InstalledApp | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    name_match = re.search(r'"name"\s+"([^"]+)"', text)
+    appid_match = re.search(r'"appid"\s+"([^"]+)"', text)
+    installdir_match = re.search(r'"installdir"\s+"([^"]+)"', text)
+    name = name_match.group(1).strip() if name_match else ""
+    appid = appid_match.group(1).strip() if appid_match else path.stem.replace("appmanifest_", "")
+    install_path = library / "steamapps" / "common" / installdir_match.group(1).strip() if installdir_match else None
+    if not name:
+        name = install_path.name if install_path else appid
+    return InstalledApp(name, install_path, "Steam", appid)
+
+
+def epic_installed_apps(custom_roots: list[Path]) -> tuple[list[InstalledApp], list[Path]]:
+    apps: list[InstalledApp] = []
+    sources: list[Path] = []
+    manifest_roots = [
+        Path("C:/ProgramData/Epic/EpicGamesLauncher/Data/Manifests"),
+        Path("/mnt/c/ProgramData/Epic/EpicGamesLauncher/Data/Manifests"),
+    ]
+    manifest_roots.extend(root / "ProgramData" / "Epic" / "EpicGamesLauncher" / "Data" / "Manifests" for root in custom_roots)
+    for manifest_root in dedupe_paths(manifest_roots):
+        if not path_exists_dir(manifest_root):
+            continue
+        sources.append(manifest_root)
+        manifests = [*sorted(manifest_root.glob("*.item")), *sorted(manifest_root.glob("*.manifest"))]
+        for manifest in manifests:
+            app = parse_epic_manifest(manifest)
+            if app is not None:
+                apps.append(app)
+    return apps, sources
+
+
+def parse_epic_manifest(path: Path) -> InstalledApp | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    name = str(data.get("DisplayName") or data.get("AppName") or data.get("CatalogItemId") or "").strip()
+    install_location = str(data.get("InstallLocation") or "").strip()
+    if not name and not install_location:
+        return None
+    return InstalledApp(name or Path(install_location).name, Path(install_location) if install_location else None, "Epic")
+
+
+def folder_installed_apps(custom_roots: list[Path]) -> tuple[list[InstalledApp], list[Path]]:
+    roots = generic_install_roots(custom_roots)
+    apps: list[InstalledApp] = []
+    sources: list[Path] = []
+    for root in roots:
+        if not path_exists_dir(root):
+            continue
+        sources.append(root)
+        try:
+            children = sorted(root.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            continue
+        for child in children:
+            if path_exists_dir(child) and not should_skip_install_folder(child):
+                apps.append(InstalledApp(child.name, child, "folder"))
+    return apps, sources
+
+
+def generic_install_roots(custom_roots: list[Path]) -> list[Path]:
+    candidates = [
+        Path("C:/Games"),
+        Path("D:/Games"),
+        Path("E:/Games"),
+        Path("C:/Program Files"),
+        Path("C:/Program Files (x86)"),
+        Path("C:/XboxGames"),
+        Path("D:/XboxGames"),
+        Path("C:/Program Files/Epic Games"),
+        Path("D:/Epic Games"),
+        Path("C:/Program Files/EA Games"),
+        Path("C:/Program Files/Electronic Arts"),
+        Path("C:/Program Files (x86)/Origin Games"),
+        Path("C:/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/games"),
+        Path("C:/Program Files/Ubisoft"),
+        Path("/mnt/c/Games"),
+        Path("/mnt/c/Program Files"),
+        Path("/mnt/c/Program Files (x86)"),
+        Path("/mnt/c/XboxGames"),
+        Path("/mnt/d/Games"),
+        Path("/mnt/e/Games"),
+        Path("/mnt/d/XboxGames"),
+        Path("/mnt/d/SteamLibrary"),
+        Path("/mnt/e/SteamLibrary"),
+        Path("/mnt/c/Program Files/Epic Games"),
+    ]
+    for steam_root in steam_roots():
+        candidates.extend(steam_libraries(steam_root))
+    for root in custom_roots:
+        candidates.extend(
+            [
+                root / "Games",
+                root / "D" / "Games",
+                root / "E" / "Games",
+                root / "Program Files",
+                root / "Program Files (x86)",
+                root / "XboxGames",
+                root / "Steam" / "steamapps" / "common",
+                root / "Epic Games",
+                root / "EA Games",
+                root / "Program Files" / "EA Games",
+                root / "Program Files" / "Electronic Arts",
+                root / "Program Files (x86)" / "Origin Games",
+                root / "Program Files (x86)" / "Ubisoft" / "Ubisoft Game Launcher" / "games",
+            ]
+        )
+    return dedupe_paths(candidates)
+
+
+def should_skip_install_folder(path: Path) -> bool:
+    name = path.name.lower()
+    if name in SKIP_FOLDER_NAMES:
+        return True
+    return "windowsapps" in path.as_posix().lower()
 
 
 def leftover_roots(custom_roots: list[Path] | None = None) -> list[Path]:
