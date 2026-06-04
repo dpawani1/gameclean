@@ -1,8 +1,16 @@
 # 🎮 GameClean by Darsh Pawani
 
-👑 A command-line tool that clears hidden game junk so titles like CS2, Fortnite, Valorant, and EA FC can feel smoother and run faster (Made for Windows)
+👑 A command-line tool that clears hidden game junk so titles like CS2, Fortnite, Valorant, and EA FC can feel smoother and run faster 
 
 ---
+## Compatibility
+
+GameClean is built mainly for **Windows gaming PCs**.
+
+- ✅ **Windows:** Fully supported.
+- ✅ **WSL:** Supported if WSL can access the Windows drive through `/mnt/c`.
+
+GameClean is most useful on Windows because most supported paths are Windows locations such as AppData, ProgramData, Steam libraries, NVIDIA shader cache, Epic Games Launcher cache, and other PC gaming folders.
 
 ## ⚡ Quick Install
 
