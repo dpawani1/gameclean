@@ -9,6 +9,7 @@ import re
 
 from .cleaner import is_deletion_allowed
 from .paths import (
+    detected_windows_user_profiles,
     dedupe_paths,
     local_appdata_roots,
     my_games_roots,
@@ -25,9 +26,9 @@ DEFAULT_MIN_SIZE = 100 * 1024 * 1024
 NOT_INSTALLED = "NOT_INSTALLED"
 INSTALLED = "INSTALLED"
 UNKNOWN = "UNKNOWN"
-LEFTOVER_REASON_NOT_INSTALLED = "Game data folder found, but no installed game match was detected"
-LEFTOVER_REASON_INSTALLED = "Game data folder found, but the game/app appears to still be installed"
-LEFTOVER_REASON_UNKNOWN = "Game data folder found, but installed game detection was inconclusive"
+EXCLUDED = "EXCLUDED"
+LEFTOVER_REASON_BROAD_CANDIDATE = "Large AppData/ProgramData folder that may be leftover; review before deleting."
+LEFTOVER_REASON_INSTALLED = "Large AppData/ProgramData folder found, but the game/app appears to still be installed"
 LEFTOVER_SAVE_RISK_REASON = (
     "HIGH RISK: known game folder may contain saves, configs, settings, or mods"
 )
@@ -40,6 +41,7 @@ SKIP_FOLDER_NAMES = {
     "amd",
     "arduino",
     "arduino-ide-updater",
+    "balenaetcher",
     "battle.net",
     "blizzard entertainment",
     "bravesoftware",
@@ -52,6 +54,7 @@ SKIP_FOLDER_NAMES = {
     "epic games",
     "epic games store",
     "epicgameslauncher",
+    "fusion360",
     "google",
     "intel",
     "jetbrains",
@@ -60,6 +63,7 @@ SKIP_FOLDER_NAMES = {
     "microsoft",
     "miniforge3",
     "mozilla",
+    "mozilla firefox",
     "mysql",
     "my games",
     "node_modules",
@@ -72,6 +76,7 @@ SKIP_FOLDER_NAMES = {
     "pip",
     "programs",
     "python",
+    "sublime text",
     "riot client",
     "riot games",
     "raspberry pi",
@@ -84,6 +89,7 @@ SKIP_FOLDER_NAMES = {
     "ubisoft game launcher",
     "windowsapps",
     "wsl",
+    "winutil",
     "xboxgames",
     "zoom",
 }
@@ -95,6 +101,7 @@ SKIP_NAME_PREFIXES = {
 
 SKIP_PATH_TERMS = {
     "appdata/local/programs",
+    "appdata/roaming/com.adobe.",
     "battle.net/cache",
     "ea desktop/cache",
     "epicgameslauncher/saved",
@@ -104,40 +111,7 @@ SKIP_PATH_TERMS = {
     "windowsapps",
 }
 
-KNOWN_GAME_NAMES = {
-    "counterstrike2",
-    "citra",
-    "easportsfc25",
-    "eldenring",
-    "fc25",
-    "hogwartslegacy",
-    "minecraft",
-}
-
-KNOWN_GAME_LAUNCHERS_AND_PLATFORMS = {
-    "battlenet",
-    "blizzardentertainment",
-    "eadesktop",
-    "eagames",
-    "easports",
-    "epicgames",
-    "epicgameslauncher",
-    "goggalaxy",
-    "origin",
-    "riotclient",
-    "riotgames",
-    "steam",
-    "ubisoft",
-    "ubisoftgamelauncher",
-    "xbox",
-    "xboxgames",
-}
-
-SAVE_RISK_GAME_NAMES = {
-    "citra",
-    "eldenring",
-    "minecraft",
-}
+SAVE_RISK_GAME_NAMES: set[str] = set()
 
 
 ProgressCallback = Callable[[ScanProgress], None]
@@ -166,11 +140,13 @@ def scan_leftovers(
     limit: int = 100,
     include_installed: bool = False,
     include_save_risk: bool = False,
+    include_excluded: bool = False,
     progress: ProgressCallback | None = None,
 ) -> list[ScanResult]:
     roots = leftover_roots(custom_roots or [])
     skipped_roots = launcher_install_roots(custom_roots or [])
     install_index = build_install_index(custom_roots or [])
+    user_names = detected_windows_user_names(custom_roots or [])
     results: list[ScanResult] = []
     seen: set[str] = set()
 
@@ -186,12 +162,27 @@ def scan_leftovers(
             if key in seen:
                 continue
             seen.add(key)
+            excluded_reason = leftover_exclusion_reason(candidate, skipped_roots, user_names)
+            if excluded_reason is not None:
+                if include_excluded:
+                    size = leftover_folder_size(candidate, skipped_roots)
+                    if size >= min_size:
+                        results.append(
+                            ScanResult(
+                                likely_app_name(candidate),
+                                candidate,
+                                size,
+                                EXCLUDED,
+                                excluded_reason,
+                                "Leftover",
+                                EXCLUDED,
+                            )
+                        )
+                continue
             size = leftover_folder_size(candidate, skipped_roots)
             if size < min_size:
                 continue
             app_name = likely_app_name(candidate)
-            if not is_known_game_related(app_name):
-                continue
             save_risk = is_save_risk_game(app_name)
             if save_risk and not include_save_risk:
                 continue
@@ -234,14 +225,11 @@ def leftover_reason(status: str, match: InstalledApp | None, *, save_risk: bool 
         if match is not None:
             return f"{LEFTOVER_REASON_INSTALLED}: {match.name}"
         return LEFTOVER_REASON_INSTALLED
-    if status == NOT_INSTALLED:
-        return LEFTOVER_REASON_NOT_INSTALLED
-    return LEFTOVER_REASON_UNKNOWN
+    return LEFTOVER_REASON_BROAD_CANDIDATE
 
 
 def is_known_game_related(app_name: str) -> bool:
-    normalized = normalize_name(app_name)
-    return normalized in KNOWN_GAME_NAMES or normalized in KNOWN_GAME_LAUNCHERS_AND_PLATFORMS
+    return leftover_exclusion_reason(Path(app_name), [], set()) is None
 
 
 def is_save_risk_game(app_name: str) -> bool:
@@ -565,7 +553,10 @@ def leftover_walk_dirs(root: Path, skipped_roots: list[Path], *, max_depth: int)
                 child = Path(entry.path)
                 if not entry.is_dir(follow_symlinks=False) or entry.is_symlink() or is_unsafe_link(child):
                     continue
-                if should_skip_leftover_candidate(child, skipped_roots):
+                if is_skipped_leftover_root(child, skipped_roots):
+                    continue
+                yield child
+                if leftover_exclusion_reason(child, skipped_roots, set()) is not None:
                     continue
                 stack.append((child, depth + 1))
             except OSError:
@@ -573,17 +564,43 @@ def leftover_walk_dirs(root: Path, skipped_roots: list[Path], *, max_depth: int)
 
 
 def should_skip_leftover_candidate(path: Path, skipped_roots: list[Path]) -> bool:
+    return is_skipped_leftover_root(path, skipped_roots)
+
+
+def is_skipped_leftover_root(path: Path, skipped_roots: list[Path]) -> bool:
+    return any(path_is_or_under(path, skipped_root) for skipped_root in skipped_roots)
+
+
+def leftover_exclusion_reason(path: Path, skipped_roots: list[Path], user_names: set[str]) -> str | None:
     if is_dangerous_path(path):
-        return True
+        return "Excluded by safety rule for save/config/mod/session/anti-cheat or protected install paths."
     name = path.name.lower()
     if name in SKIP_FOLDER_NAMES:
-        return True
+        return "Excluded known non-game software/system folder name."
     if any(name.startswith(prefix) for prefix in SKIP_NAME_PREFIXES):
-        return True
+        return "Excluded known non-game software/system folder pattern."
     text = path.as_posix().lower()
     if any(term in text for term in SKIP_PATH_TERMS):
-        return True
-    return any(path_is_or_under(path, skipped_root) for skipped_root in skipped_roots)
+        return "Excluded known non-game software/system path."
+    if is_programdata_user_folder(path, user_names):
+        return "Excluded ProgramData folder matching a Windows user profile name."
+    return None
+
+
+def detected_windows_user_names(custom_roots: list[Path]) -> set[str]:
+    names = {profile.name.lower() for profile in detected_windows_user_profiles(custom_roots)}
+    for env_name in ("USERNAME", "USER"):
+        value = os.environ.get(env_name)
+        if value:
+            names.add(value.lower())
+    return names
+
+
+def is_programdata_user_folder(path: Path, user_names: set[str]) -> bool:
+    if path.name.lower() not in user_names:
+        return False
+    parts = [part.lower() for part in path.parts]
+    return len(parts) >= 2 and parts[-2] == "programdata"
 
 
 def leftover_folder_size(path: Path, skipped_roots: list[Path]) -> int:

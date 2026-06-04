@@ -17,7 +17,7 @@ from .cleaner import (
     safety_skipped_results,
 )
 from .installers import DEFAULT_INSTALLER_MIN_SIZE, InstallerResult, is_installer_deletion_allowed, scan_installers
-from .leftovers import INSTALLED, NOT_INSTALLED, UNKNOWN, DEFAULT_MIN_SIZE, is_known_game_related, scan_leftovers
+from .leftovers import EXCLUDED, INSTALLED, NOT_INSTALLED, UNKNOWN, DEFAULT_MIN_SIZE, scan_leftovers
 from .paths import detect_os_mode, root_diagnostics
 from .scanner import REVIEW, SAFE, ScanProgress, ScanResult, scan
 from .utils import format_size
@@ -135,11 +135,16 @@ def handle_leftovers(args: argparse.Namespace) -> None:
             limit=args.limit,
             include_installed=True,
             include_save_risk=args.include_save_risk,
+            include_excluded=args.show_excluded,
             progress=progress.update,
         )
     finally:
         progress.finish()
-    visible_results = visible_leftover_results(results, include_installed=args.include_installed)
+    visible_results = visible_leftover_results(
+        results,
+        include_installed=args.include_installed,
+        include_excluded=args.show_excluded,
+    )
     if args.dry_run:
         print_leftovers_dry_run(visible_results, all_results=results)
         return
@@ -347,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-save-risk",
         action="store_true",
         help="include high-risk game folders that may contain saves, configs, settings, or mods",
+    )
+    leftovers_parser.add_argument(
+        "--show-excluded",
+        action="store_true",
+        help="show denied leftover candidates with exclusion reasons; never prompts them for deletion",
     )
     leftovers_mode = leftovers_parser.add_mutually_exclusive_group()
     leftovers_mode.add_argument(
@@ -821,10 +831,18 @@ def print_leftovers_cleanup_header() -> None:
     print()
 
 
-def visible_leftover_results(results: list[ScanResult], *, include_installed: bool) -> list[ScanResult]:
-    if include_installed:
-        return results
-    return [result for result in results if result.install_status != INSTALLED]
+def visible_leftover_results(
+    results: list[ScanResult],
+    *,
+    include_installed: bool,
+    include_excluded: bool = False,
+) -> list[ScanResult]:
+    visible = results
+    if not include_installed:
+        visible = [result for result in visible if result.install_status != INSTALLED]
+    if not include_excluded:
+        visible = [result for result in visible if result.install_status != EXCLUDED]
+    return visible
 
 
 def print_leftovers_report(results: list[ScanResult], *, all_results: list[ScanResult] | None = None) -> None:
@@ -846,11 +864,16 @@ def print_leftover_totals(results: list[ScanResult], all_results: list[ScanResul
     likely_leftovers = [result for result in results if result.install_status == NOT_INSTALLED]
     unknown = [result for result in results if result.install_status == UNKNOWN]
     installed_hidden = len([result for result in all_results if result.install_status == INSTALLED and result not in results])
+    excluded_visible = len([result for result in results if result.install_status == EXCLUDED])
+    excluded_hidden = len([result for result in all_results if result.install_status == EXCLUDED and result not in results])
     review_results = [result for result in results if result.install_status in {NOT_INSTALLED, UNKNOWN}]
     print("Totals:")
     print(f"Likely leftover folders: {len(likely_leftovers)}")
     print(f"Unknown status folders: {len(unknown)}")
     print(f"Installed folders hidden: {installed_hidden}")
+    if excluded_visible or excluded_hidden:
+        print(f"Excluded folders shown: {excluded_visible}")
+        print(f"Excluded folders hidden: {excluded_hidden}")
     print(f"Review-only size: {format_size(sum(result.size_bytes for result in review_results))}")
 
 
@@ -888,8 +911,9 @@ def collect_leftover_cleanup_targets(results: list[ScanResult], *, include_insta
         for result in results
         if result.size_bytes > 0
         and is_deletion_allowed(result)
-        and is_known_game_related(result.name)
-        and (include_installed or result.install_status == NOT_INSTALLED)
+        and result.install_status != EXCLUDED
+        and result.category != EXCLUDED
+        and (include_installed or result.install_status in {NOT_INSTALLED, UNKNOWN})
     ]
     selected: list[ScanResult] = []
     skipped = 0

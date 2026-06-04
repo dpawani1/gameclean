@@ -37,8 +37,19 @@ class LeftoverCliTests(unittest.TestCase):
         self.assertEqual(selection.selected, [])
         self.assertEqual(selection.review_skipped, 1)
 
-    def test_leftover_review_does_not_prompt_generic_unknown_folders(self) -> None:
-        result = ScanResult("Discord", Path("Discord"), 10, REVIEW, "Possible leftover", "Leftovers")
+    def test_leftover_review_prompts_broad_unknown_folders(self) -> None:
+        result = ScanResult("Trackmania", Path("Trackmania"), 10, REVIEW, "Possible leftover", "Leftovers")
+
+        output = StringIO()
+        with patch("builtins.input", return_value="n") as mocked_input, redirect_stdout(output):
+            selection = collect_leftover_cleanup_targets([result])
+
+        mocked_input.assert_called_once()
+        self.assertEqual(selection.selected, [])
+        self.assertEqual(selection.review_skipped, 1)
+
+    def test_leftover_review_does_not_prompt_excluded_folders(self) -> None:
+        result = ScanResult("Discord", Path("Discord"), 10, "EXCLUDED", "Excluded", "Leftovers", "EXCLUDED")
 
         output = StringIO()
         with patch("builtins.input") as mocked_input, redirect_stdout(output):

@@ -53,8 +53,30 @@ class LeftoverScanTests(unittest.TestCase):
             default_results = scan_leftovers([root], min_size=1)
             deep_results = scan_leftovers([root], min_size=1, deep=True, max_depth=2)
 
-            self.assertEqual(default_results, [])
+            self.assertEqual([result.name for result in default_results], ["Vendor"])
             self.assertIn("Hogwarts Legacy", [result.name for result in deep_results])
+
+    def test_scan_leftovers_keeps_broad_non_allowlisted_game_candidates(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            local = root / "Users" / "Darsh" / "AppData" / "Local"
+            for name in ("Trackmania", "MultiVersus", "Pokemon Showdown", "curseforge-updater", "FACEIT"):
+                path = local / name
+                path.mkdir(parents=True)
+                (path / "data.bin").write_bytes(b"a" * 20)
+
+            results = scan_leftovers([root], min_size=1)
+
+            self.assertEqual(
+                {result.name for result in results},
+                {"Trackmania", "MultiVersus", "Pokemon Showdown", "curseforge-updater", "FACEIT"},
+            )
+            self.assertTrue(
+                all(
+                    result.reason == "Large AppData/ProgramData folder that may be leftover; review before deleting."
+                    for result in results
+                )
+            )
 
     def test_scan_leftovers_applies_limit_after_sorting_by_size(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -108,16 +130,20 @@ class LeftoverScanTests(unittest.TestCase):
     def test_scan_leftovers_excludes_common_software_and_system_false_positives(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            local = root / "Users" / "Darsh" / "AppData" / "Local"
+            local = root / "Users" / "Darsh 2" / "AppData" / "Local"
+            roaming = root / "Users" / "Darsh 2" / "AppData" / "Roaming"
             programdata = root / "ProgramData"
             false_positives = [
                 local / "Programs",
                 programdata / "Darsh 2",
                 local / "Discord",
-                local / "com.adobe.dunamis",
+                roaming / "com.adobe.dunamis",
+                programdata / "Mozilla-1de4eec8-1241-4177-a864-e594e8d1fb38",
                 local / "Mozilla-1de4eec8-1241-4177-a864-e594e8d1fb38",
                 local / "arduino-ide-updater",
                 local / "Google",
+                local / "Mozilla",
+                local / "Mozilla Firefox",
                 local / "BraveSoftware",
                 local / "WSL",
                 local / "MATLAB",
@@ -131,6 +157,10 @@ class LeftoverScanTests(unittest.TestCase):
                 local / "Code",
                 local / "pip",
                 local / "Python",
+                local / "Sublime Text",
+                local / "Fusion360",
+                local / "balenaEtcher",
+                local / "winutil",
             ]
             for path in false_positives:
                 path.mkdir(parents=True)
@@ -142,6 +172,24 @@ class LeftoverScanTests(unittest.TestCase):
             results = scan_leftovers([root], min_size=1)
 
             self.assertEqual([result.name for result in results], ["Hogwarts Legacy"])
+
+    def test_scan_leftovers_can_show_excluded_without_returning_them_by_default(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            local = root / "Users" / "Darsh" / "AppData" / "Local"
+            discord = local / "Discord"
+            game = local / "Hogwarts Legacy"
+            for path in (discord, game):
+                path.mkdir(parents=True)
+                (path / "data.bin").write_bytes(b"a" * 20)
+
+            default_results = scan_leftovers([root], min_size=1)
+            shown_results = scan_leftovers([root], min_size=1, include_excluded=True)
+
+            self.assertEqual([result.name for result in default_results], ["Hogwarts Legacy"])
+            excluded = [result for result in shown_results if result.name == "Discord"]
+            self.assertEqual(len(excluded), 1)
+            self.assertEqual(excluded[0].install_status, "EXCLUDED")
 
     def test_scan_leftovers_excludes_save_risk_games_by_default(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -155,18 +203,11 @@ class LeftoverScanTests(unittest.TestCase):
             default_results = scan_leftovers([root], min_size=1)
             save_risk_results = scan_leftovers([root], min_size=1, include_save_risk=True)
 
-            self.assertEqual([result.name for result in default_results], ["Hogwarts Legacy"])
             self.assertEqual(
                 {result.name for result in save_risk_results},
                 {"EldenRing", "Citra", "minecraft", "Hogwarts Legacy"},
             )
-            self.assertTrue(
-                all(
-                    result.reason.startswith("HIGH RISK")
-                    for result in save_risk_results
-                    if result.name in {"EldenRing", "Citra", "minecraft"}
-                )
-            )
+            self.assertEqual({result.name for result in default_results}, {result.name for result in save_risk_results})
 
 
 if __name__ == "__main__":
