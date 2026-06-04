@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import platform
 import re
 from pathlib import Path
 
@@ -13,6 +14,7 @@ SKIP_WINDOWS_USER_DIRS = {
     "all users",
     "default",
     "default user",
+    "public",
 }
 
 WSL_WINDOWS_ROOT_CANDIDATES = [
@@ -23,13 +25,23 @@ WSL_WINDOWS_ROOT_CANDIDATES = [
     Path("/mnt/c/XboxGames"),
     Path("/mnt/d/Games"),
     Path("/mnt/d/SteamLibrary"),
+    Path("/mnt/d/Games/SteamLibrary"),
     Path("/mnt/e/Games"),
     Path("/mnt/e/SteamLibrary"),
+    Path("/mnt/e/Games/SteamLibrary"),
 ]
 
 
 @dataclass(frozen=True)
 class RootDiagnostics:
+    os_mode: str
+    windows_user_profiles: list[Path]
+    local_appdata_roots: list[Path]
+    roaming_appdata_roots: list[Path]
+    programdata_roots: list[Path]
+    userprofile_roots: list[Path]
+    steam_roots: list[Path]
+    steam_library_roots: list[Path]
     existing_roots: list[Path]
     missing_windows_roots: list[str]
 
@@ -74,28 +86,59 @@ def common_windows_roots() -> list[Path]:
 
 def common_game_roots() -> list[Path]:
     candidates: list[Path | None] = [
-        get_env_path("LOCALAPPDATA"),
-        get_env_path("APPDATA"),
-        env_join("USERPROFILE", "Documents"),
-        env_join("USERPROFILE", "Documents", "My Games"),
-        env_join("USERPROFILE", "Saved Games"),
-        get_env_path("PROGRAMDATA"),
+        *local_appdata_roots(),
+        *roaming_appdata_roots(),
+        *documents_roots(),
+        *my_games_roots(),
+        *saved_games_roots(),
+        *programdata_roots(),
         env_join("LOCALAPPDATA", "Packages"),
         *common_windows_roots(),
         *wsl_non_user_windows_roots(),
-        *wsl_user_roots(),
     ]
     return first_existing(dedupe_paths([path for path in candidates if path is not None]))
 
 
 def root_diagnostics(custom_roots: list[Path] | None = None) -> RootDiagnostics:
+    custom_roots = custom_roots or []
+    steam = [*steam_roots(), *[root / "Steam" for root in custom_roots]]
+    libraries: list[Path] = []
+    for root in steam:
+        libraries.extend(steam_libraries(root))
     roots = [
         *common_game_roots(),
-        *steam_roots(),
-        *(custom_scan_roots(custom_roots or [])),
+        *steam,
+        *libraries,
+        *(custom_scan_roots(custom_roots)),
     ]
     missing = missing_important_windows_roots()
-    return RootDiagnostics(first_existing(dedupe_paths(roots)), missing)
+    return RootDiagnostics(
+        detect_os_mode(),
+        detected_windows_user_profiles(custom_roots),
+        local_appdata_roots(custom_roots),
+        roaming_appdata_roots(custom_roots),
+        programdata_roots(custom_roots),
+        userprofile_roots(custom_roots),
+        first_existing(dedupe_paths(steam)),
+        first_existing(dedupe_paths(libraries)),
+        first_existing(dedupe_paths(roots)),
+        missing,
+    )
+
+
+def detect_os_mode() -> str:
+    system = platform.system().lower()
+    if system == "windows":
+        return "Windows"
+    if system == "linux":
+        try:
+            version = Path("/proc/version").read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            version = ""
+        if "microsoft" in version or "wsl" in version:
+            return "WSL"
+        return "Linux"
+    return "unknown"
 
 
 def missing_important_windows_roots() -> list[str]:
@@ -149,6 +192,75 @@ def windows_user_scan_roots(users_root: Path) -> list[Path]:
     return first_existing(dedupe_paths(candidates))
 
 
+def detected_windows_user_profiles(custom_roots: list[Path] | None = None) -> list[Path]:
+    users_roots = [Path("/mnt/c/Users"), *[root / "Users" for root in custom_roots or []]]
+    profiles: list[Path] = []
+    for users_root in users_roots:
+        if not path_exists_dir(users_root):
+            continue
+        try:
+            children = sorted(users_root.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            continue
+        for child in children:
+            if not path_exists_dir(child):
+                continue
+            if child.name.lower() in {"all users", "default", "default user"}:
+                continue
+            profiles.append(child)
+    return first_existing(dedupe_paths(profiles))
+
+
+def scan_windows_user_profiles(custom_roots: list[Path] | None = None) -> list[Path]:
+    return [
+        profile
+        for profile in detected_windows_user_profiles(custom_roots)
+        if profile.name.lower() not in SKIP_WINDOWS_USER_DIRS
+    ]
+
+
+def local_appdata_roots(custom_roots: list[Path] | None = None) -> list[Path]:
+    candidates = [get_env_path("LOCALAPPDATA")]
+    candidates.extend(profile / "AppData" / "Local" for profile in scan_windows_user_profiles(custom_roots))
+    return first_existing(dedupe_paths([path for path in candidates if path is not None]))
+
+
+def roaming_appdata_roots(custom_roots: list[Path] | None = None) -> list[Path]:
+    candidates = [get_env_path("APPDATA")]
+    candidates.extend(profile / "AppData" / "Roaming" for profile in scan_windows_user_profiles(custom_roots))
+    return first_existing(dedupe_paths([path for path in candidates if path is not None]))
+
+
+def programdata_roots(custom_roots: list[Path] | None = None) -> list[Path]:
+    candidates = [get_env_path("PROGRAMDATA"), Path("/mnt/c/ProgramData")]
+    candidates.extend(root / "ProgramData" for root in custom_roots or [])
+    return first_existing(dedupe_paths([path for path in candidates if path is not None]))
+
+
+def userprofile_roots(custom_roots: list[Path] | None = None) -> list[Path]:
+    candidates = [get_env_path("USERPROFILE")]
+    candidates.extend(scan_windows_user_profiles(custom_roots))
+    return first_existing(dedupe_paths([path for path in candidates if path is not None]))
+
+
+def documents_roots(custom_roots: list[Path] | None = None) -> list[Path]:
+    candidates = [env_join("USERPROFILE", "Documents")]
+    candidates.extend(profile / "Documents" for profile in scan_windows_user_profiles(custom_roots))
+    return first_existing(dedupe_paths([path for path in candidates if path is not None]))
+
+
+def my_games_roots(custom_roots: list[Path] | None = None) -> list[Path]:
+    candidates = [env_join("USERPROFILE", "Documents", "My Games")]
+    candidates.extend(profile / "Documents" / "My Games" for profile in scan_windows_user_profiles(custom_roots))
+    return first_existing(dedupe_paths([path for path in candidates if path is not None]))
+
+
+def saved_games_roots(custom_roots: list[Path] | None = None) -> list[Path]:
+    candidates = [env_join("USERPROFILE", "Saved Games")]
+    candidates.extend(profile / "Saved Games" for profile in scan_windows_user_profiles(custom_roots))
+    return first_existing(dedupe_paths([path for path in candidates if path is not None]))
+
+
 def custom_scan_roots(custom_roots: list[Path]) -> list[Path]:
     candidates: list[Path] = []
     for root in custom_roots:
@@ -172,6 +284,10 @@ def steam_roots() -> list[Path]:
         Path("C:/Program Files/Steam"),
         Path("/mnt/c/Program Files (x86)/Steam"),
         Path("/mnt/c/Program Files/Steam"),
+        Path("/mnt/d/SteamLibrary"),
+        Path("/mnt/e/SteamLibrary"),
+        Path("/mnt/d/Games/SteamLibrary"),
+        Path("/mnt/e/Games/SteamLibrary"),
     ]
 
     program_files_x86 = get_env_path("PROGRAMFILES(X86)")
@@ -198,14 +314,25 @@ def steam_libraries(steam_root: Path) -> list[Path]:
 
     for match in re.finditer(r'"path"\s+"([^"]+)"', text):
         raw = match.group(1).replace("\\\\", "\\")
-        libraries.append(Path(raw))
+        libraries.extend(steam_vdf_paths(raw))
 
     # Older libraryfolders.vdf versions used numeric keys directly.
     for match in re.finditer(r'"\d+"\s+"([^"]+)"', text):
         raw = match.group(1).replace("\\\\", "\\")
-        libraries.append(Path(raw))
+        libraries.extend(steam_vdf_paths(raw))
 
     return first_existing(dedupe_paths(libraries))
+
+
+def steam_vdf_paths(raw: str) -> list[Path]:
+    normalized = raw.replace("\\", "/")
+    paths = [Path(normalized)]
+    drive_match = re.match(r"^([A-Za-z]):/(.*)$", normalized)
+    if drive_match:
+        drive = drive_match.group(1).lower()
+        rest = drive_match.group(2)
+        paths.append(Path("/mnt") / drive / rest)
+    return paths
 
 
 def dedupe_paths(paths: list[Path]) -> list[Path]:

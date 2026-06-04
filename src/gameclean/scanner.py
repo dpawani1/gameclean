@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import re
 
-from .paths import common_game_roots, custom_scan_roots, env_join, steam_libraries, steam_roots
+from .paths import (
+    common_game_roots,
+    custom_scan_roots,
+    env_join,
+    local_appdata_roots,
+    my_games_roots,
+    programdata_roots,
+    roaming_appdata_roots,
+    saved_games_roots,
+    steam_libraries,
+    steam_roots,
+)
 from .utils import (
     folder_size,
     is_cache_like_dir,
@@ -37,30 +51,67 @@ class ScanTarget:
     source: str
 
 
-def scan(custom_roots: list[Path] | None = None) -> list[ScanResult]:
+@dataclass(frozen=True)
+class ScanProgress:
+    label: str
+    current: int
+    total: int
+    path: Path
+
+
+ProgressCallback = Callable[[ScanProgress], None]
+
+
+def scan(
+    custom_roots: list[Path] | None = None,
+    *,
+    deep: bool = False,
+    max_depth: int = 5,
+    review_limit: int = 100,
+    progress: ProgressCallback | None = None,
+) -> list[ScanResult]:
     custom_roots = custom_roots or []
     results: list[ScanResult] = []
     seen: set[str] = set()
+    review_count = 0
 
-    for target in known_targets(custom_roots):
-        add_result(results, seen, target)
+    direct_targets = [*known_targets(custom_roots), *steam_targets(custom_roots), *game_specific_targets(custom_roots)]
+    for index, target in enumerate(direct_targets, start=1):
+        review_count += add_result(results, seen, target, review_count, review_limit)
+        if progress is not None:
+            progress(ScanProgress("Checking known paths", index, len(direct_targets), target.path))
 
-    for target in steam_targets(custom_roots):
-        add_result(results, seen, target)
-
-    for target in broad_discovery_targets(seen, custom_roots):
-        add_result(results, seen, target)
+    if deep and review_count < review_limit:
+        roots = deep_discovery_roots(custom_roots)
+        for index, root in enumerate(roots, start=1):
+            if progress is not None:
+                progress(ScanProgress("Scanning root", index, len(roots), root))
+            for target in deep_discovery_targets_for_root(root, seen, max_depth=max_depth):
+                if target.category == REVIEW and review_count >= review_limit:
+                    break
+                review_count += add_result(results, seen, target, review_count, review_limit)
+            if review_count >= review_limit:
+                break
 
     return sorted(results, key=lambda result: result.size_bytes, reverse=True)
 
 
-def add_result(results: list[ScanResult], seen: set[str], target: ScanTarget) -> None:
+def add_result(
+    results: list[ScanResult],
+    seen: set[str],
+    target: ScanTarget,
+    review_count: int,
+    review_limit: int,
+) -> int:
     if target.category == SKIP or not path_exists_dir(target.path):
-        return
+        return 0
+
+    if target.category == REVIEW and review_count >= review_limit:
+        return 0
 
     key = resolved_key(target.path)
     if key in seen:
-        return
+        return 0
     seen.add(key)
 
     results.append(
@@ -73,6 +124,7 @@ def add_result(results: list[ScanResult], seen: set[str], target: ScanTarget) ->
             source=target.source,
         )
     )
+    return 1 if target.category == REVIEW else 0
 
 
 def known_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
@@ -82,28 +134,8 @@ def known_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
         if path is not None:
             targets.append(ScanTarget(name, path, category, reason, source))
 
-    known_gpu_reason = "Known GPU shader cache"
-    add("NVIDIA DXCache", env_join("LOCALAPPDATA", "NVIDIA", "DXCache"), SAFE, known_gpu_reason, "GPU")
-    add("NVIDIA GLCache", env_join("LOCALAPPDATA", "NVIDIA", "GLCache"), SAFE, known_gpu_reason, "GPU")
-    add(
-        "NVIDIA NV_Cache",
-        env_join("LOCALAPPDATA", "NVIDIA Corporation", "NV_Cache"),
-        SAFE,
-        known_gpu_reason,
-        "GPU",
-    )
-    add(
-        "NVIDIA ProgramData NV_Cache",
-        env_join("PROGRAMDATA", "NVIDIA Corporation", "NV_Cache"),
-        SAFE,
-        known_gpu_reason,
-        "GPU",
-    )
-    add("AMD DxCache", env_join("LOCALAPPDATA", "AMD", "DxCache"), SAFE, known_gpu_reason, "GPU")
-    add("AMD GLCache", env_join("LOCALAPPDATA", "AMD", "GLCache"), SAFE, known_gpu_reason, "GPU")
-    add("AMD VkCache", env_join("LOCALAPPDATA", "AMD", "VkCache"), SAFE, known_gpu_reason, "GPU")
-    add("Intel ShaderCache", env_join("LOCALAPPDATA", "Intel", "ShaderCache"), SAFE, known_gpu_reason, "GPU")
-    add("Intel ComputeCache", env_join("LOCALAPPDATA", "Intel", "ComputeCache"), SAFE, known_gpu_reason, "GPU")
+    for target in gpu_targets(custom_roots):
+        targets.append(target)
 
     add(
         "Epic Games Launcher webcache",
@@ -114,7 +146,7 @@ def known_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
     )
     epic_saved = env_join("LOCALAPPDATA", "EpicGamesLauncher", "Saved")
     if epic_saved and path_exists_dir(epic_saved):
-        for path in epic_saved.glob("webcache_*"):
+        for path in safe_glob(epic_saved, "webcache_*"):
             add("Epic Games Launcher webcache", path, SAFE, "Known Epic Games Launcher web cache", "Epic")
     add(
         "Epic Games Launcher Logs",
@@ -272,51 +304,66 @@ def known_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
 
 def custom_known_targets(root: Path) -> list[ScanTarget]:
     targets: list[ScanTarget] = []
-
-    def add(name: str, path: Path, category: str, reason: str, source: str) -> None:
-        targets.append(ScanTarget(name, path, category, reason, source))
-
-    known_gpu_reason = "Known GPU shader cache"
-    users_root = root / "Users"
-    if path_exists_dir(users_root):
-        try:
-            users = sorted(users_root.iterdir(), key=lambda path: path.name.lower())
-        except OSError:
-            users = []
-        for user_root in users:
-            local = user_root / "AppData" / "Local"
-            add("NVIDIA DXCache", local / "NVIDIA" / "DXCache", SAFE, known_gpu_reason, "GPU")
-            add("NVIDIA GLCache", local / "NVIDIA" / "GLCache", SAFE, known_gpu_reason, "GPU")
-            add(
-                "NVIDIA NV_Cache",
-                local / "NVIDIA Corporation" / "NV_Cache",
-                SAFE,
-                known_gpu_reason,
-                "GPU",
-            )
-            add(
+    for local in local_appdata_roots([root]):
+        targets.append(
+            ScanTarget(
                 "Epic Games Launcher webcache",
                 local / "EpicGamesLauncher" / "Saved" / "webcache",
                 SAFE,
                 "Known Epic Games Launcher web cache",
                 "Epic",
             )
-            epic_saved = local / "EpicGamesLauncher" / "Saved"
-            if path_exists_dir(epic_saved):
-                for path in epic_saved.glob("webcache_*"):
-                    add("Epic Games Launcher webcache", path, SAFE, "Known Epic Games Launcher web cache", "Epic")
+        )
+        epic_saved = local / "EpicGamesLauncher" / "Saved"
+        if path_exists_dir(epic_saved):
+            for path in safe_glob(epic_saved, "webcache_*"):
+                targets.append(ScanTarget("Epic Games Launcher webcache", path, SAFE, "Known Epic Games Launcher web cache", "Epic"))
+    for programdata in programdata_roots([root]):
+        targets.append(ScanTarget("Battle.net Cache", programdata / "Battle.net" / "Cache", SAFE, "Known Battle.net cache", "Battle.net"))
+    return targets
 
-    add(
-        "NVIDIA ProgramData NV_Cache",
-        root / "ProgramData" / "NVIDIA Corporation" / "NV_Cache",
-        SAFE,
-        known_gpu_reason,
-        "GPU",
-    )
-    add("Battle.net Cache", root / "ProgramData" / "Battle.net" / "Cache", SAFE, "Known Battle.net cache", "Battle.net")
-    add("Steam shadercache", root / "Steam" / "steamapps" / "shadercache", SAFE, "Known Steam shader cache", "Steam")
-    add("Steam appcache", root / "Steam" / "appcache", SAFE, "Known Steam app cache", "Steam")
-    add("Steam depotcache", root / "Steam" / "depotcache", SAFE, "Known Steam depot cache", "Steam")
+
+def gpu_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
+    targets: list[ScanTarget] = []
+    known_gpu_reason = "Known GPU shader cache"
+    local_paths = [
+        ("NVIDIA DXCache", "NVIDIA/DXCache", SAFE),
+        ("NVIDIA GLCache", "NVIDIA/GLCache", SAFE),
+        ("NVIDIA NV_Cache", "NVIDIA Corporation/NV_Cache", SAFE),
+        ("AMD DxCache", "AMD/DxCache", SAFE),
+        ("AMD GLCache", "AMD/GLCache", SAFE),
+        ("AMD VkCache", "AMD/VkCache", SAFE),
+        ("Intel ShaderCache", "Intel/ShaderCache", SAFE),
+        ("Intel ComputeCache", "Intel/ComputeCache", SAFE),
+    ]
+    for root in local_appdata_roots(custom_roots):
+        for name, relative, category in local_paths:
+            targets.append(ScanTarget(name, root / Path(relative), category, known_gpu_reason, "GPU"))
+
+    for root in programdata_roots(custom_roots):
+        targets.append(
+            ScanTarget(
+                "NVIDIA ProgramData NV_Cache",
+                root / "NVIDIA Corporation" / "NV_Cache",
+                SAFE,
+                known_gpu_reason,
+                "GPU",
+            )
+        )
+        targets.append(
+            ScanTarget(
+                "NVIDIA Downloader",
+                root / "NVIDIA Corporation" / "Downloader",
+                REVIEW,
+                "NVIDIA driver download cache; review before deleting",
+                "GPU",
+            )
+        )
+        amd_root = root / "AMD"
+        if path_exists_dir(amd_root):
+            for child in safe_glob(amd_root, "*"):
+                if child.is_dir() and is_cache_like_dir(child):
+                    targets.append(ScanTarget(f"AMD ProgramData {child.name}", child, REVIEW, "AMD cache-like ProgramData folder; review only", "GPU"))
 
     return targets
 
@@ -330,15 +377,14 @@ def steam_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
             ("Steam appcache", root / "appcache", SAFE, "Known Steam app cache"),
             ("Steam depotcache", root / "depotcache", SAFE, "Known Steam depot cache"),
             ("Steam htmlcache", root / "config" / "htmlcache", SAFE, "Known Steam browser html cache"),
-            ("Steam shadercache", root / "steamapps" / "shadercache", SAFE, "Known Steam shader cache"),
             ("Steam logs", root / "logs", REVIEW, "Steam logs; review before deleting"),
         ]
         for name, path, category, reason in explicit:
             targets.append(ScanTarget(name, path, category, reason, "Steam"))
 
         for library in steam_libraries(root):
+            targets.extend(steam_shadercache_targets(library))
             library_targets = [
-                ("Steam library shadercache", library / "steamapps" / "shadercache", SAFE, "Known Steam shader cache"),
                 ("Steam downloading", library / "steamapps" / "downloading", REVIEW, "Steam download staging folder; review only"),
                 ("Steam temp", library / "steamapps" / "temp", REVIEW, "Steam temporary folder; review only"),
                 (
@@ -360,36 +406,149 @@ def steam_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
     return targets
 
 
-def broad_discovery_targets(existing_keys: set[str], custom_roots: list[Path] | None = None) -> list[ScanTarget]:
+def steam_shadercache_targets(library: Path) -> list[ScanTarget]:
+    shadercache = library / "steamapps" / "shadercache"
+    app_names = steam_app_names(library)
     targets: list[ScanTarget] = []
-    roots = [*common_game_roots(), *custom_scan_roots(custom_roots or [])]
-    for root in roots:
-        max_depth = 8 if custom_roots and any(is_relative_to(root, custom_root) for custom_root in custom_roots) else 5
-        if root.name.lower() in {"programdata", "games", "xboxgames"}:
-            max_depth = min(max_depth, 4)
-        for path in safe_walk_dirs(root, max_depth=max_depth):
-            if resolved_key(path) in existing_keys:
+    if path_exists_dir(shadercache):
+        try:
+            children = sorted(shadercache.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            children = []
+        for child in children:
+            if not path_exists_dir(child):
                 continue
-            category, reason = classify_candidate(path)
-            if category == SKIP:
-                continue
-            targets.append(ScanTarget(candidate_name(path), path, category, reason, "Discovery"))
+            appid = child.name
+            name = app_names.get(appid, f"Steam app {appid}")
+            targets.append(
+                ScanTarget(
+                    f"{name} shadercache",
+                    child,
+                    SAFE,
+                    "Steam per-game shader cache",
+                    "Steam",
+                )
+            )
+        if not targets:
+            targets.append(ScanTarget("Steam shadercache", shadercache, SAFE, "Known Steam shader cache", "Steam"))
     return targets
 
 
-def is_relative_to(path: Path, root: Path) -> bool:
+def steam_app_names(library: Path) -> dict[str, str]:
+    names: dict[str, str] = {}
+    steamapps = library / "steamapps"
     try:
-        path.resolve(strict=False).relative_to(root.resolve(strict=False))
-        return True
-    except ValueError:
-        return False
+        manifests = list(steamapps.glob("appmanifest_*.acf"))
+    except OSError:
+        return names
+    for manifest in manifests:
+        try:
+            text = manifest.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        appid_match = re.search(r'"appid"\s+"([^"]+)"', text)
+        name_match = re.search(r'"name"\s+"([^"]+)"', text)
+        fallback = manifest.stem.replace("appmanifest_", "")
+        appid = appid_match.group(1) if appid_match else fallback
+        if name_match:
+            names[appid] = name_match.group(1)
+    return names
+
+
+GAME_CACHE_SUBPATHS = (
+    ("Cache",),
+    ("cache",),
+    ("Caches",),
+    ("ShaderCache",),
+    ("shadercache",),
+    ("Saved", "DerivedDataCache"),
+    ("Saved", "Logs"),
+    ("Saved", "Crashes"),
+    ("Saved", "CrashDumps"),
+    ("Logs",),
+    ("logs",),
+    ("CrashDumps",),
+    ("crashdumps",),
+    ("Temp",),
+    ("temp",),
+)
+
+
+def game_specific_targets(custom_roots: list[Path] | None = None) -> list[ScanTarget]:
+    targets: list[ScanTarget] = []
+    roots = [
+        *local_appdata_roots(custom_roots),
+        *roaming_appdata_roots(custom_roots),
+        *my_games_roots(custom_roots),
+        *saved_games_roots(custom_roots),
+    ]
+    for root in roots:
+        if not path_exists_dir(root):
+            continue
+        try:
+            children = sorted(root.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            continue
+        for game_dir in children:
+            if not path_exists_dir(game_dir):
+                continue
+            if is_dangerous_path(game_dir):
+                continue
+            for parts in GAME_CACHE_SUBPATHS:
+                path = game_dir.joinpath(*parts)
+                if is_dangerous_path(path):
+                    continue
+                targets.append(
+                    ScanTarget(
+                        f"{game_dir.name} {'/'.join(parts)}",
+                        path,
+                        REVIEW,
+                        "Game cache/log/crash folder found by bounded fast scan; review before deleting",
+                        "Game-specific",
+                    )
+                )
+    return targets
+
+
+def deep_discovery_targets(
+    existing_keys: set[str],
+    custom_roots: list[Path] | None = None,
+    *,
+    max_depth: int = 5,
+) -> Iterator[ScanTarget]:
+    for root in deep_discovery_roots(custom_roots):
+        yield from deep_discovery_targets_for_root(root, existing_keys, max_depth=max_depth)
+
+
+def deep_discovery_roots(custom_roots: list[Path] | None = None) -> list[Path]:
+    return [*common_game_roots(), *custom_scan_roots(custom_roots or [])]
+
+
+def deep_discovery_targets_for_root(root: Path, existing_keys: set[str], *, max_depth: int = 5) -> Iterator[ScanTarget]:
+    root_max_depth = max_depth
+    if root.name.lower() in {"programdata", "games", "xboxgames"}:
+        root_max_depth = min(root_max_depth, 4)
+    for path in safe_walk_dirs(root, max_depth=root_max_depth):
+        if resolved_key(path) in existing_keys:
+            continue
+        if has_reported_descendant(path, existing_keys):
+            continue
+        category, reason = classify_candidate(path)
+        if category == SKIP:
+            continue
+        yield ScanTarget(candidate_name(path), path, category, reason, "Discovery")
+
+
+def has_reported_descendant(path: Path, existing_keys: set[str]) -> bool:
+    prefix = resolved_key(path).rstrip(os.sep) + os.sep
+    return any(key.startswith(prefix) for key in existing_keys)
 
 
 def classify_candidate(path: Path) -> tuple[str, str]:
     if not is_cache_like_dir(path):
         return SKIP, ""
 
-    # Broad discovery is intentionally conservative: saves, configs, mods,
+    # Deep discovery is intentionally conservative: saves, configs, mods,
     # installs, and protected app data are not cleanable candidates.
     if is_dangerous_path(path):
         return SKIP, ""
@@ -407,3 +566,10 @@ def candidate_name(path: Path) -> str:
     if parent and parent.lower() not in {"saved", "appdata", "local", "roaming", "programdata"}:
         return f"{parent} {path.name}"
     return path.name
+
+
+def safe_glob(root: Path, pattern: str) -> Iterator[Path]:
+    try:
+        yield from root.glob(pattern)
+    except OSError:
+        return

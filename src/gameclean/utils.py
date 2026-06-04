@@ -15,6 +15,12 @@ SKIP_DIR_NAMES = {
     "node_modules",
     "site-packages",
     "venv",
+    "captures",
+    "config",
+    "configs",
+    "mods",
+    "saves",
+    "screenshots",
 }
 
 SKIP_PATH_PARTS = {
@@ -22,6 +28,14 @@ SKIP_PATH_PARTS = {
     "program files/windowsapps",
     "windows",
     "windowsapps",
+}
+
+SKIP_DIR_TERMS = {
+    "anti-cheat",
+    "anticheat",
+    "battleye",
+    "easyanticheat",
+    "riot vanguard",
 }
 
 DANGEROUS_TERMS = {
@@ -153,6 +167,8 @@ def folder_size(path: Path) -> int:
 def should_skip_dir(name: str, path: Path) -> bool:
     lowered_name = name.lower()
     if lowered_name in SKIP_DIR_NAMES:
+        return True
+    if any(term in lowered_name for term in SKIP_DIR_TERMS):
         return True
     parts = [part.lower() for part in path.parts]
     joined = "/".join(parts)
