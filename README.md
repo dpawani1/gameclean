@@ -311,3 +311,42 @@ uv run gameclean --help
 ```
 
 ---
+## 🧾 Example Cleanup Report
+
+Example output from a real GameClean cleanup run:
+
+```txt
+Final report:
+Folders selected: 36
+Files deleted: 9405
+Folders deleted: 3346
+Skipped/failed items: 87
+Estimated space cleaned: 9.4 GB
+```
+
+Example cleaned items:
+
+```txt
+NVIDIA DXCache: 8.3 GB
+Steam appcache: 128.8 MB
+AMD DxCache: 61.7 MB
+Steam depotcache: 20.8 MB
+Hades shadercache: 6.9 MB
+Counter-Strike 2 shadercache: 668.2 KB
+Slay the Spire 2 shadercache: 654.2 KB
+The Witcher 3: Wild Hunt shadercache: 372.9 KB
+Ubisoft Connect cache: 286.5 MB
+FortniteGame Saved/Logs: 258.6 MB
+discord Cache: 143.8 MB
+Local Battle.net Cache: 86.6 MB
+Steam logs: 25.9 MB
+Zoom Logs: 34.0 MB
+EpicGamesLauncher Saved/Crashes: 25.1 MB
+SlayTheSpire2 Logs: 20.8 MB
+GitHub Desktop Cache: 5.9 MB
+Riot Metadata: 5.1 MB
+MarvelRivals_Launcher Cache: 567.0 KB
+Minecraft logs: 10.4 KB
+```
+
+This shows why GameClean separates **SAFE** and **REVIEW** items before deletion. Some cleanup targets are obvious cache folders, while others are logs or app-specific files that should be confirmed first.
