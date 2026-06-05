@@ -32,7 +32,7 @@ GameClean uses `uv`, a fast Python package and tool manager.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**Linux / macOS**
+**Linux**
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
