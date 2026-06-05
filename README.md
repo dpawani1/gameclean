@@ -1,20 +1,29 @@
-# 🎮 GameClean by Darsh Pawani
+# 👾 GameClean by Darsh Pawani
 
-👑 A command-line tool that clears hidden game junk so titles like CS2, Fortnite, Valorant, and EA FC can feel smoother and run faster 
+♛ A command-line tool that clears hidden game junk so titles like **CS2, Fortnite, Valorant, and EA FC** can feel smoother and run faster.
+
+GameClean finds old shader cache, launcher clutter, crash logs, leftover game folders, and installer files that build up over time and quietly waste storage.
 
 ---
-## Compatibility
+
+## 🖥️ Compatibility
 
 GameClean is built mainly for **Windows gaming PCs**.
 
-- ✅ **Windows:** Fully supported.
-- ✅ **WSL:** Supported if WSL can access the Windows drive through `/mnt/c`.
+| Platform | Support                                                        |
+| -------- | -------------------------------------------------------------- |
+| Windows  | Fully supported                                                |
+| WSL      | Supported if WSL can access the Windows drive through `/mnt/c` |
+| Linux    | Limited support                                                |
+| macOS    | Limited support                                                |
 
-GameClean is most useful on Windows because most supported paths are Windows locations such as AppData, ProgramData, Steam libraries, NVIDIA shader cache, Epic Games Launcher cache, and other PC gaming folders.
+GameClean is most useful on Windows because most supported paths are Windows locations such as `AppData`, `ProgramData`, Steam libraries, NVIDIA shader cache, Epic Games Launcher cache, and other PC gaming folders.
 
-## Quick Install
+---
 
-GameClean uses `uv`, a fast Python package/tool manager.
+## ⚙️ Quick Install
+
+GameClean uses `uv`, a fast Python package and tool manager.
 
 ### 1. Install `uv`
 
@@ -24,7 +33,7 @@ GameClean uses `uv`, a fast Python package/tool manager.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**Linux**
+**Linux / macOS**
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -46,7 +55,7 @@ If `gameclean` is not found after installing, restart your terminal or make sure
 
 ---
 
-## 🧹 What GameClean Does
+## 🧨 What GameClean Does
 
 GameClean is a Windows gaming storage cleanup CLI. I originally created it for personal use, but wanted to share it because cache buildup after game updates can seriously affect performance.
 
@@ -54,9 +63,19 @@ GameClean scans and deletes cache across all games and software on your PC. It c
 
 In my own use, cleaning old cache files improved my CS2 performance from about **120 FPS** to around **180 FPS**. GameClean turns that manual cleanup process into a simple command-line tool with a safety system: **SAFE** items can be cleaned automatically, while **REVIEW** items require `y/n` confirmation.
 
+GameClean can find:
+
+* GPU shader caches
+* Steam shader caches
+* Steam per-game shader caches
+* Epic, EA, Battle.net, Riot, Ubisoft, GOG, Minecraft, and CurseForge cache/log folders
+* leftover game folders from uninstalled games
+* old installer/package files
+* crash logs and temporary files
+
 ---
 
-## Quick Start
+## 🏁 Quick Start
 
 Run the main interactive menu:
 
@@ -81,7 +100,7 @@ For most users, this is the easiest way to use the tool. Pick an option, review 
 
 ---
 
-## Usage
+## ⌨️ Usage
 
 ### Scan without deleting anything
 
@@ -135,7 +154,7 @@ gameclean scan --show-roots
 
 ---
 
-## Commands
+## 🧰 Commands
 
 ### `gameclean`
 
@@ -233,17 +252,19 @@ Lets the user review old installer/package files one by one and delete selected 
 gameclean installers --review
 ```
 
+Installer files are never deleted automatically. The user must type `y` or `yes`.
+
 ---
 
 ## 🛡️ Safety Model
 
 GameClean uses two main categories:
 
-### ✅ SAFE
+### 🟢 SAFE
 
 Known cache folders that can usually be cleaned automatically, such as GPU shader caches or Steam cache folders.
 
-### ⚠️ REVIEW
+### 🟡 REVIEW
 
 Folders or files that may be safe to remove, but should be confirmed by the user first.
 
@@ -281,14 +302,6 @@ Run the tool during development:
 uv run gameclean --help
 uv run gameclean
 uv run gameclean scan
-```
-
-Test fake demo data safely:
-
-```bash
-uv run gameclean clean --dry-run --root examples/fake_windows
-uv run gameclean leftovers --dry-run --root examples/fake_windows --min 1B
-uv run gameclean installers --dry-run --root examples/fake_windows --min 1B
 ```
 
 Install from GitHub inside another `uv` project:
