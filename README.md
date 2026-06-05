@@ -12,7 +12,7 @@ GameClean is built mainly for **Windows gaming PCs**.
 
 GameClean is most useful on Windows because most supported paths are Windows locations such as AppData, ProgramData, Steam libraries, NVIDIA shader cache, Epic Games Launcher cache, and other PC gaming folders.
 
-## ⚡ Quick Install
+## Quick Install
 
 GameClean uses `uv`, a fast Python package/tool manager.
 
@@ -56,7 +56,7 @@ In my own use, cleaning old cache files improved my CS2 performance from about *
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 Run the main interactive menu:
 
@@ -81,7 +81,7 @@ For most users, this is the easiest way to use the tool. Pick an option, review 
 
 ---
 
-## 📌 Usage
+## Usage
 
 ### Scan without deleting anything
 
@@ -135,7 +135,7 @@ gameclean scan --show-roots
 
 ---
 
-## 🕹️ Commands
+## Commands
 
 ### `gameclean`
 
