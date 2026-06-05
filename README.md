@@ -14,8 +14,7 @@ GameClean is built mainly for **Windows gaming PCs**.
 | -------- | -------------------------------------------------------------- |
 | Windows  | Fully supported                                                |
 | WSL      | Supported if WSL can access the Windows drive through `/mnt/c` |
-| Linux    | Limited support                                                |
-| macOS    | Limited support                                                |
+
 
 GameClean is most useful on Windows because most supported paths are Windows locations such as `AppData`, `ProgramData`, Steam libraries, NVIDIA shader cache, Epic Games Launcher cache, and other PC gaming folders.
 
