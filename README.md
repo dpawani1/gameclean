@@ -27,7 +27,7 @@ GameClean uses `uv`, a fast Python package and tool manager.
 
 ### 1. Install `uv`
 
-**Windows PowerShell**
+**Windows PowerShell** (Restart Shell after Installing!)
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
